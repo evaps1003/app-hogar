@@ -1,5 +1,6 @@
 import React from 'react';
-import { StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Pressable, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
 
 interface SectionCardProps {
@@ -7,6 +8,8 @@ interface SectionCardProps {
   subtitle?: string;
   children: React.ReactNode;
   style?: ViewStyle;
+  onPressHeader?: () => void;
+  expanded?: boolean;
 }
 
 export function SectionCard({
@@ -14,8 +17,34 @@ export function SectionCard({
   subtitle,
   children,
   style,
+  onPressHeader,
+  expanded = true,
 }: SectionCardProps) {
   const { theme } = useTheme();
+
+  const header = (
+    <View style={styles.head}>
+      <View style={styles.headText}>
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
+          {title}
+        </Text>
+        {subtitle ? (
+          <Text
+            style={[styles.subtitle, { color: theme.colors.textSecondary }]}
+          >
+            {subtitle}
+          </Text>
+        ) : null}
+      </View>
+      {onPressHeader ? (
+        <Ionicons
+          name={expanded ? 'chevron-up' : 'chevron-down'}
+          size={18}
+          color={theme.colors.tabInactive}
+        />
+      ) : null}
+    </View>
+  );
 
   return (
     <View
@@ -33,17 +62,14 @@ export function SectionCard({
         style,
       ]}
     >
-      <View style={styles.head}>
-        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
-          {title}
-        </Text>
-        {subtitle ? (
-          <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
-            {subtitle}
-          </Text>
-        ) : null}
-      </View>
-      <View style={styles.body}>{children}</View>
+      {onPressHeader ? (
+        <Pressable onPress={onPressHeader} style={styles.headPressable}>
+          {header}
+        </Pressable>
+      ) : (
+        header
+      )}
+      {expanded ? <View style={styles.body}>{children}</View> : null}
     </View>
   );
 }
@@ -55,7 +81,16 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   head: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
     marginBottom: 6,
+  },
+  headText: {
+    flex: 1,
+  },
+  headPressable: {
+    marginBottom: 0,
   },
   title: {
     fontSize: 17,

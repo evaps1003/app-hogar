@@ -8,7 +8,6 @@ export function CalendarioScreen() {
     <Screen>
       <ScreenHeader
         title="Calendario"
-        eyebrow="Hogar"
         subtitle="La convivencia, en el tiempo"
       />
       <EmptyState

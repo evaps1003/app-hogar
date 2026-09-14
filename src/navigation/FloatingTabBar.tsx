@@ -4,6 +4,7 @@ import { BottomTabBarProps } from '@react-navigation/bottom-tabs';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../theme';
+import { useHousehold } from '../data/HouseholdContext';
 import { RootTabParamList } from './types';
 
 type RouteName = keyof RootTabParamList;
@@ -16,10 +17,10 @@ interface Tab {
 }
 
 const TABS: Tab[] = [
-  { route: 'Hoy', label: 'Hoy', icon: 'sunny-outline', activeIcon: 'sunny' },
+  { route: 'Hoy', label: 'Mis Tareas', icon: 'sunny-outline', activeIcon: 'sunny' },
   {
     route: 'Tareas',
-    label: 'Tareas',
+    label: 'Reparto',
     icon: 'clipboard-outline',
     activeIcon: 'clipboard',
   },
@@ -49,7 +50,13 @@ export function FloatingTabBar({
 }: BottomTabBarProps) {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
+  const { activeMember } = useHousehold();
   const bottomPadding = Math.max(insets.bottom, 12);
+
+  const isSupervised = activeMember?.householdRole === 'supervised';
+  const visibleTabs = TABS.filter(
+    (tab) => !(tab.route === 'Tareas' && isSupervised),
+  );
 
   return (
     <View style={[styles.outer, { marginBottom: bottomPadding }]}>
@@ -67,7 +74,7 @@ export function FloatingTabBar({
           },
         ]}
       >
-        {TABS.map((tab) => {
+        {visibleTabs.map((tab) => {
           const routeKey = tab.route as RouteName;
           const index = state.routes.findIndex((r) => r.name === routeKey);
           const isFocused = index !== -1 && state.index === index;

@@ -26,7 +26,13 @@ export interface FlexibleSchedule {
   weekKey: string;
 }
 
-export type TaskSchedule = ScheduledSchedule | FlexibleSchedule;
+export interface OnceSchedule {
+  type: 'once';
+  dueDate: string;
+  time?: string | null;
+}
+
+export type TaskSchedule = ScheduledSchedule | FlexibleSchedule | OnceSchedule;
 
 export interface RotatingTurn {
   esRotativa: boolean;
@@ -36,6 +42,8 @@ export interface RotatingTurn {
   fechaInicioCiclo: number;
   proximaRotacion: number;
 }
+
+export type TaskCategory = 'limpieza' | 'cocina' | 'otros' | (string & {});
 
 export interface Task {
   id: string;
@@ -47,11 +55,14 @@ export interface Task {
   completedAt: number | null;
   schedule?: TaskSchedule;
   rotacion?: RotatingTurn;
+  enSubasta?: boolean;
+  category?: TaskCategory;
 }
 
 export interface HouseData {
   members: Member[];
   activeMemberId: string | null;
+  categories?: string[];
 }
 
 export interface TasksStorage {

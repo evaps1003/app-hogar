@@ -23,10 +23,12 @@ interface HouseholdContextValue {
   activeMemberId: string | null;
   activeMember: Member | null;
   ready: boolean;
+  categories: string[];
   addMember: (input: AddMemberInput) => void;
   setActiveMember: (id: string) => void;
   getMemberById: (id: string | null) => Member | undefined;
   updateMemberRole: (id: string, householdRole: HouseholdRole) => void;
+  addCategory: (name: string) => void;
 }
 
 const HouseholdContext = createContext<HouseholdContextValue | undefined>(
@@ -74,6 +76,9 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
                   parsed.activeMemberId ??
                   parsed.members[0]?.id ??
                   null,
+                categories: Array.isArray(parsed.categories)
+                  ? parsed.categories
+                  : [],
               });
             } else {
               setState(buildSeedHouse());
@@ -144,6 +149,23 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       );
     };
 
+    const addCategory = (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      if (activeMember?.householdRole === 'supervised') return;
+      const current = Array.isArray(state?.categories) ? state!.categories : [];
+      if (
+        current.some((c) => c.toLowerCase() === trimmed.toLowerCase())
+      ) {
+        return;
+      }
+      setState((prev) =>
+        prev
+          ? { ...prev, categories: [...current, trimmed] }
+          : prev,
+      );
+    };
+
     const activeMember =
       members.find((member) => member.id === state?.activeMemberId) ?? null;
 
@@ -152,10 +174,12 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       activeMemberId: state?.activeMemberId ?? null,
       activeMember,
       ready,
+      categories: Array.isArray(state?.categories) ? state!.categories : [],
       addMember,
       setActiveMember,
       getMemberById: (id) => members.find((member) => member.id === id),
       updateMemberRole,
+      addCategory,
     };
   }, [state, ready]);
 

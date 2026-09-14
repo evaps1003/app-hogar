@@ -8,7 +8,6 @@ export function ComprasScreen() {
     <Screen>
       <ScreenHeader
         title="Compras"
-        eyebrow="Hogar"
         subtitle="Lista de la compra compartida"
       />
       <EmptyState

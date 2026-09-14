@@ -16,7 +16,10 @@ export function ScheduleBadge({ schedule }: ScheduleBadgeProps) {
   const label = formatSchedule(schedule);
   if (!label) return null;
 
-  const icon = schedule.type === 'flexible' ? 'calendar-outline' : 'time-outline';
+  const icon =
+    schedule.type === 'flexible' || schedule.type === 'once'
+      ? 'calendar-outline'
+      : 'time-outline';
 
   return (
     <View

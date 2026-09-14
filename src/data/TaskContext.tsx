@@ -12,10 +12,11 @@ import {
   DayOfWeek,
   RotatingTurn,
   Task,
+  TaskCategory,
   TaskSchedule,
   TasksStorage,
 } from './types';
-import { getCurrentWeekKey } from './schedule';
+import { getCurrentWeekKey, toDateKey, fromDateKey, startOfWeek, addDays } from './schedule';
 import { useHousehold } from './HouseholdContext';
 import { useClock } from './ClockContext';
 
@@ -27,6 +28,7 @@ interface TaskActionBase {
   assigneeId: string | null;
   schedule?: TaskSchedule;
   rotacion?: RotatingTurn;
+  category?: TaskCategory;
 }
 
 interface TasksContextValue {
@@ -44,6 +46,12 @@ interface TasksContextValue {
   doneAssigned: Task[];
   pendingFree: Task[];
   doneFree: Task[];
+  swapRequests: Task[];
+  requestSwap: (taskId: string) => void;
+  assumeTask: (taskId: string) => void;
+  assignTask: (taskId: string, assigneeId: string | null) => void;
+  updateTask: (taskId: string, input: TaskActionBase) => void;
+  deleteTask: (taskId: string) => void;
   dueOn: (day: DayOfWeek) => Task[];
   thisWeek: Task[];
   doneThisWeek: Task[];
@@ -234,6 +242,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
         completedAt: null,
         schedule: input.schedule,
         rotacion,
+        category: input.category ?? 'otros',
       };
       setState((prev) =>
         prev ? { ...prev, tasks: [...prev.tasks, task] } : prev,
@@ -262,6 +271,7 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
           completed,
           completedBy: completed ? (assignee?.name ?? 'Alguien') : null,
           completedAt: completed ? Date.now() : null,
+          enSubasta: completed ? false : task.enSubasta,
         };
       });
     };
@@ -290,6 +300,69 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       return task.assigneeId === activeMember?.id;
     };
 
+    const requestSwap = (taskId: string) => {
+      patchTask(taskId, (task) => {
+        if (task.completed) return task;
+        if (task.assigneeId !== activeMember?.id) return task;
+        const already = task.enSubasta;
+        return { ...task, enSubasta: !already };
+      });
+    };
+
+    const assumeTask = (taskId: string) => {
+      const id = activeMember?.id;
+      if (!id) return;
+      patchTask(taskId, (task) => {
+        if (!task.enSubasta || task.completed) return task;
+        if (task.assigneeId === id) return task;
+        return { ...task, assigneeId: id, enSubasta: false };
+      });
+    };
+
+    const assignTask = (taskId: string, assigneeId: string | null) => {
+      if (activeMember?.householdRole === 'supervised') return;
+      patchTask(taskId, (task) => {
+        if (task.completed) return task;
+        const next = { ...task, assigneeId, enSubasta: false } as Task;
+        const rot = task.rotacion;
+        if (rot && assigneeId) {
+          const idx = rot.miembrosTurno.indexOf(assigneeId);
+          if (idx !== -1) {
+            next.rotacion = { ...rot, indiceTurnoActual: idx };
+          }
+        }
+        return next;
+      });
+    };
+
+    const updateTask = (taskId: string, input: TaskActionBase) => {
+      if (activeMember?.householdRole === 'supervised') return;
+      patchTask(taskId, (task) => {
+        const next: Task = {
+          ...task,
+          title: input.title,
+          assigneeId: input.assigneeId,
+          schedule: input.schedule,
+          rotacion: input.rotacion,
+          category: input.category ?? task.category,
+          enSubasta:
+            task.enSubasta && task.assigneeId !== input.assigneeId
+              ? false
+              : task.enSubasta,
+        };
+        return next;
+      });
+    };
+
+    const deleteTask = (taskId: string) => {
+      if (activeMember?.householdRole === 'supervised') return;
+      setState((prev) =>
+        prev
+          ? { ...prev, tasks: prev.tasks.filter((t) => t.id !== taskId) }
+          : prev,
+      );
+    };
+
     const advanceTurn = (taskId: string) => {
       patchTask(taskId, (task) => advanceTurnTask(task));
     };
@@ -312,6 +385,10 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       if (s?.type === 'scheduled' && s.repeatWeekly === false && s.weekKey) {
         return s.weekKey === weekKey;
       }
+      if (s?.type === 'once') {
+        const todayKey = toDateKey(new Date());
+        return s.dueDate >= todayKey;
+      }
       return true;
     };
 
@@ -322,8 +399,15 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
 
     const todayDay = new Date().getDay() as DayOfWeek;
 
-    const isThisWeek = (t: Task) =>
-      t.schedule?.type === 'flexible' && t.schedule.weekKey === weekKey;
+    const isThisWeek = (t: Task) => {
+      if (t.schedule?.type === 'flexible' && t.schedule.weekKey === weekKey) return true;
+      if (t.schedule?.type === 'once') {
+        const monday = startOfWeek();
+        const sunday = addDays(monday, 6);
+        return t.schedule.dueDate >= toDateKey(monday) && t.schedule.dueDate <= toDateKey(sunday);
+      }
+      return false;
+    };
 
     const activeId = activeMember?.id;
 
@@ -334,6 +418,12 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
           const s = t.schedule;
           if (!s) return day === todayDay;
           if (s.type === 'flexible') return false;
+          if (s.type === 'once') {
+            const dueDate = fromDateKey(s.dueDate);
+            const dueDay = dueDate.getDay() as DayOfWeek;
+            if (dueDay !== day) return false;
+            return getCurrentWeekKey(dueDate) === weekKey;
+          }
           if (!s.days.includes(day)) return false;
           if (s.repeatWeekly) return true;
           return s.weekKey === weekKey;
@@ -354,6 +444,19 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       doneAssigned: sortTasks(assigned.filter((t) => t.completed)),
       pendingFree: sortTasks(free.filter((t) => !t.completed)),
       doneFree: sortTasks(free.filter((t) => t.completed)),
+      swapRequests: sortTasks(
+        assigned.filter(
+          (t) =>
+            !t.completed &&
+            t.enSubasta &&
+            t.assigneeId !== activeId,
+        ),
+      ),
+      requestSwap,
+      assumeTask,
+      assignTask,
+      updateTask,
+      deleteTask,
       dueOn,
       thisWeek: sortTasks(
         assigned.filter(

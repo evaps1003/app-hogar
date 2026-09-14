@@ -15,6 +15,12 @@ export interface Palette {
   accent: string;
   accentSoft: string;
   accentStrong: string;
+  info: string;
+  infoSoft: string;
+  infoStrong: string;
+  warning: string;
+  warningSoft: string;
+  warningStrong: string;
   pillBackground: string;
   tabInactive: string;
   divider: string;
@@ -39,6 +45,12 @@ export const PASTEL_BLOOM: Palette = {
   accent: '#A5D6C1',
   accentSoft: '#E4F2EB',
   accentStrong: '#7FBFA4',
+  info: '#A9C4E8',
+  infoSoft: '#E8F0FB',
+  infoStrong: '#7FA4D6',
+  warning: '#EBC38F',
+  warningSoft: '#FBF0DF',
+  warningStrong: '#DEA25C',
   pillBackground: '#F2EBF7',
   tabInactive: '#A79DAD',
   divider: '#EFE9F3',
@@ -63,6 +75,12 @@ export const NOCHE_SERENA: Palette = {
   accent: '#9ED0BB',
   accentSoft: '#22322B',
   accentStrong: '#ABDCC7',
+  info: '#9DB8DC',
+  infoSoft: '#22303F',
+  infoStrong: '#A9C6E8',
+  warning: '#E8BE8A',
+  warningSoft: '#3A2A16',
+  warningStrong: '#EFC896',
   pillBackground: '#3B3347',
   tabInactive: '#8D8296',
   divider: '#3A3347',

@@ -39,7 +39,6 @@ export function AjustesScreen() {
     >
       <ScreenHeader
         title="Ajustes"
-        eyebrow="App"
         subtitle="Tema, hogar y miembros"
       />
 

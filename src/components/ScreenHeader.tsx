@@ -1,14 +1,20 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../theme';
 
 interface ScreenHeaderProps {
   title: string;
   subtitle?: string;
   eyebrow?: string;
+  onPressTitle?: () => void;
 }
 
-export function ScreenHeader({ title, subtitle, eyebrow }: ScreenHeaderProps) {
+export function ScreenHeader({
+  title,
+  subtitle,
+  eyebrow,
+  onPressTitle,
+}: ScreenHeaderProps) {
   const { theme } = useTheme();
 
   return (
@@ -18,9 +24,16 @@ export function ScreenHeader({ title, subtitle, eyebrow }: ScreenHeaderProps) {
           {eyebrow}
         </Text>
       ) : null}
-      <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
-        {title}
-      </Text>
+      <Pressable
+        disabled={!onPressTitle}
+        onPress={onPressTitle}
+        hitSlop={8}
+        style={({ pressed }) => pressed && { opacity: 0.5 }}
+      >
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
+          {title}
+        </Text>
+      </Pressable>
       {subtitle ? (
         <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
           {subtitle}
