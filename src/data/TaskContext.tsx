@@ -7,7 +7,6 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildSeedTasks } from './seed';
 import {
   DayOfWeek,
   RotatingTurn,
@@ -287,14 +286,14 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
               };
               setState(applyCycleMaintenance(normalized, Date.now()));
             } else {
-              setState(buildSeedTasks());
+              setState({ tasks: [] });
             }
           } else {
-            setState(buildSeedTasks());
+            setState({ tasks: [] });
           }
         }
       } catch {
-        if (!cancelled) setState(buildSeedTasks());
+        if (!cancelled) setState({ tasks: [] });
       } finally {
         if (!cancelled) setReady(true);
       }

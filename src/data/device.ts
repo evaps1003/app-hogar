@@ -1,5 +1,4 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getUrlParam } from './webLink';
 
 export const DEVICE_MEMBER_KEY = 'my_device_member_id';
 
@@ -72,8 +71,4 @@ export async function clearDeviceMemberId(): Promise<void> {
   } catch {
     // ignore
   }
-}
-
-export function getInviteHomeIdFromUrl(): string | null {
-  return getUrlParam('join_home');
 }

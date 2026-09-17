@@ -24,8 +24,8 @@ App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, T
 ## Arquitectura
 - Navegación: bottom-tabs flotante (Hoy, Tareas, Compras, Ajustes) en `src/navigation/RootNavigator.tsx`.
 - Estado (AsyncStorage): `hogar.household.v1` (`HouseholdContext`: miembros + rol + miembro activo + `homeId` + avisos), `hogar.tasks.v2` (`TaskContext`), `hogar.shopping.v1` (`ComprasContext`), `hogar.devTools.v1`, `my_device_member_id` (identidad por dispositivo).
-- `AppShell` (en `App.tsx`) bloquea la app hasta cargar y muestra `WelcomeScreen` la primera vez (o al abrir enlace `?join_home=`), hasta fijar `my_device_member_id`.
-- Seed: Laura (leader, primary), Papá (coadmin, accent), Hermano (supervised, highlight); tarea rotativa "Limpiar la cocina"; `homeId: 'home-martinez'`.
+- `AppShell` (en `App.tsx`) bloquea la app hasta cargar y muestra `WelcomeScreen` en dos modos hasta fijar `my_device_member_id`: **crear** (sin hogar guardado ni enlace de invitación → "Crear mi hogar": nombre, "¿Cómo te llamas?" + color pastel, `[Comenzar]`, crea hogar nuevo y el primer miembro es Líder) o **unirse** (llegó por enlace de invitación o el hogar ya existe → "¿Quién eres?" con lista de miembros + alta). **No hay seed**: instalaciones nuevas no crean miembros/tareas de prueba (Laura/Papá/Hermano ya no existen; los usos que ya tengan datos en `hogar.*` se conservan).
+- Invitación: `buildInviteUrl({ homeId, householdName, members })` empaqueta el estado del hogar en `?invite=<base64/json>`; al unirse, `readJoinContext()` lo decodifica y adopta ese hogar (nombre + miembros) aunque el dispositivo esté vacío. `?join_home=<id>` se mantiene como compatibilidad.
 - Tema pastel: `src/theme/` (palettes, tokens, useTheme). Tokens: radius (`sm 12, md 16, lg 24, xl 32, pill 999`), colores por miembro (`primary/highlight/accent` + `*Soft`/`*Strong`).
 
 ## Modelo de datos (`src/data/types.ts`)
@@ -46,7 +46,7 @@ App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, T
 - Urls de parámetros/invitación: `src/data/webLink.ts` (`getUrlParam`, `buildInviteUrl`); identidad de dispositivo: `src/data/device.ts` (`my_device_member_id`, AsyncStorage + localStorage en web).
 
 ## Reglas de negocio
-- Identidad por dispositivo: `assignDeviceMember` fija `my_device_member_id` y `activeMemberId`; reasignable desde Ajustes (chip "Eres tú" solo visual). `join_home` en la URL cambia `homeId` y fuerza la pantalla "¿Quién eres?".
+- Identidad por dispositivo: `assignDeviceMember` fija `my_device_member_id` y `activeMemberId`; reasignable desde Ajustes (chip "Eres tú" solo visual). `createHousehold` crea hogar + primer miembro (rol Líder) + identidad del dispositivo en un solo paso. Las tareas en instalaciones nuevas arrancan vacías (sin miembros de prueba).
 - Supervisado no crea tareas (FAB oculto + guard en `addTask`); `canCheckTask` solo si es libre o `assigneeId === activeMember.id`. Roles editables solo por Líder/Co-admin (`MemberRoleSheet`).
 - Hoy es vista personal: `dueOn(day)` filtra `assigneeId === activeMember.id`; bolsa común global; avisos vigentes del Tablón en pastillas amarillas (`highlightSoft`, `📌 Aviso:`).
 - Tablón del hogar en Ajustes: `addNotice/updateNotice/deleteNotice`, purge de caducados cada 30 s; solo el Líder gestiona miembros y renombra el hogar.

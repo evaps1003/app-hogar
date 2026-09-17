@@ -7,13 +7,12 @@ import React, {
   useState,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { buildSeedHouse } from './seed';
 import { computeNoticeExpiry, isNoticeExpired } from './notices';
 import {
   getDeviceMemberId,
-  getInviteHomeIdFromUrl,
   setDeviceMemberId,
 } from './device';
+import { readJoinContext, InvitePayload } from './webLink';
 import {
   HouseData,
   HouseholdRole,
@@ -43,6 +42,11 @@ interface HouseholdContextValue {
   joinRequested: boolean;
   deviceMemberId: string | null;
   deviceReady: boolean;
+  createHousehold: (input: {
+    homeName: string;
+    memberName: string;
+    color: MemberColor;
+  }) => Member;
   addMember: (input: AddMemberInput) => Member | undefined;
   setActiveMember: (id: string) => void;
   assignDeviceMember: (id: string) => void;
@@ -104,6 +108,17 @@ function nextColor(members: Member[]): MemberColor {
   return [...COLOR_ORDER].sort((a, b) => counts[a] - counts[b])[0];
 }
 
+function buildHouseFromInvite(invite: InvitePayload): HouseData {
+  return {
+    members: invite.members.map((member) => ({ ...member })),
+    activeMemberId: null,
+    homeId: invite.homeId,
+    householdName: (invite.homeName || '').trim() || 'Mi hogar',
+    categories: [],
+    notices: [],
+  };
+}
+
 export function HouseholdProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<HouseData | null>(null);
   const [ready, setReady] = useState(false);
@@ -118,7 +133,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     let cancelled = false;
 
     async function load() {
-      const joinHomeId = getInviteHomeIdFromUrl();
+      const join = readJoinContext();
       const [raw, savedDeviceId] = await Promise.all([
         AsyncStorage.getItem(STORAGE_KEY),
         getDeviceMemberId(),
@@ -157,18 +172,16 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
             };
           }
         }
-        if (!next) next = buildSeedHouse();
-        if (joinHomeId) next = { ...next, homeId: joinHomeId };
+        if (join.invite) next = buildHouseFromInvite(join.invite);
         if (!cancelled) {
           if (savedDeviceId) setDeviceMemberIdState(savedDeviceId);
           setState(next);
-          setJoinRequested(Boolean(joinHomeId));
+          setJoinRequested(join.requested);
         }
       } catch {
         if (!cancelled) {
-          const fallback = buildSeedHouse();
-          setState(joinHomeId ? { ...fallback, homeId: joinHomeId } : fallback);
-          setJoinRequested(Boolean(joinHomeId));
+          setState(join.invite ? buildHouseFromInvite(join.invite) : null);
+          setJoinRequested(join.requested);
         }
       } finally {
         if (!cancelled) {
@@ -210,6 +223,33 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<HouseholdContextValue>(() => {
     const members = state?.members ?? [];
+
+    const createHousehold = (input: {
+      homeName: string;
+      memberName: string;
+      color: MemberColor;
+    }): Member => {
+      const memberName = input.memberName.trim();
+      const homeName = input.homeName.trim();
+      const member: Member = {
+        id: makeId('member'),
+        name: memberName || 'Yo',
+        color: input.color,
+        householdRole: 'leader',
+      };
+      const house: HouseData = {
+        members: [member],
+        activeMemberId: member.id,
+        homeId: makeId('home'),
+        householdName: homeName || 'Mi hogar',
+        categories: [],
+        notices: [],
+      };
+      setState(house);
+      setDeviceMemberIdState(member.id);
+      setDeviceMemberId(member.id);
+      return member;
+    };
 
     const addMember = (input: AddMemberInput): Member | undefined => {
       const name = input.name.trim();
@@ -388,6 +428,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       joinRequested,
       deviceMemberId,
       deviceReady,
+      createHousehold,
       addMember,
       setActiveMember,
       assignDeviceMember,

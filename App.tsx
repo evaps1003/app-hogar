@@ -45,10 +45,11 @@ function AppShell() {
   const showWelcome = !onboarded && (joinRequested || !deviceMemberExists);
 
   if (showWelcome) {
+    const mode = joinRequested || members.length > 0 ? 'join' : 'create';
     return (
       <>
         <StatusBar style={theme.isDark ? 'light' : 'dark'} />
-        <WelcomeScreen onDone={() => setOnboarded(true)} />
+        <WelcomeScreen mode={mode} onDone={() => setOnboarded(true)} />
       </>
     );
   }

@@ -95,11 +95,11 @@ export function AjustesScreen() {
   };
 
   const handleInvite = async () => {
-    if (!homeId) {
+    if (!homeId || members.length === 0) {
       setToast('Este dispositivo aún no tiene hogar asignado');
       return;
     }
-    const url = buildInviteUrl(homeId);
+    const url = buildInviteUrl({ homeId, householdName, members });
     try {
       await Clipboard.setStringAsync(url);
       setToast('🔗 Enlace de invitación copiado al portapapeles');
