@@ -10,6 +10,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildSeedHouse } from './seed';
 import { computeNoticeExpiry, isNoticeExpired } from './notices';
 import {
+  getDeviceMemberId,
+  getInviteHomeIdFromUrl,
+  setDeviceMemberId,
+} from './device';
+import {
   HouseData,
   HouseholdRole,
   HouseNotice,
@@ -34,8 +39,13 @@ interface HouseholdContextValue {
   categories: string[];
   householdName: string;
   notices: HouseNotice[];
-  addMember: (input: AddMemberInput) => void;
+  homeId: string;
+  joinRequested: boolean;
+  deviceMemberId: string | null;
+  deviceReady: boolean;
+  addMember: (input: AddMemberInput) => Member | undefined;
   setActiveMember: (id: string) => void;
+  assignDeviceMember: (id: string) => void;
   getMemberById: (id: string | null) => Member | undefined;
   updateMemberRole: (id: string, householdRole: HouseholdRole) => void;
   removeMember: (id: string) => void;
@@ -97,53 +107,74 @@ function nextColor(members: Member[]): MemberColor {
 export function HouseholdProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<HouseData | null>(null);
   const [ready, setReady] = useState(false);
+  const [deviceMemberId, setDeviceMemberIdState] = useState<string | null>(
+    null,
+  );
+  const [deviceReady, setDeviceReady] = useState(false);
+  const [joinRequested, setJoinRequested] = useState(false);
   const firstRender = useRef(true);
 
   useEffect(() => {
     let cancelled = false;
 
     async function load() {
+      const joinHomeId = getInviteHomeIdFromUrl();
+      const [raw, savedDeviceId] = await Promise.all([
+        AsyncStorage.getItem(STORAGE_KEY),
+        getDeviceMemberId(),
+      ]);
+      if (cancelled) return;
       try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (!cancelled) {
-          if (raw) {
-            const parsed = JSON.parse(raw) as HouseData;
-            if (Array.isArray(parsed.members)) {
-              setState({
-                ...parsed,
-                activeMemberId:
-                  parsed.activeMemberId ??
-                  parsed.members[0]?.id ??
-                  null,
-                categories: Array.isArray(parsed.categories)
-                  ? parsed.categories
-                  : [],
-                householdName:
-                  typeof parsed.householdName === 'string' &&
-                  parsed.householdName.trim()
-                    ? parsed.householdName
-                    : 'Mi hogar',
-                notices: Array.isArray(parsed.notices)
-                  ? purgeExpired(
-                      parsed.notices
-                        .map(normalizeNotice)
-                        .filter(
-                          (notice): notice is HouseNotice => notice !== null,
-                        ),
-                    )
-                  : [],
-              });
-            } else {
-              setState(buildSeedHouse());
-            }
-          } else {
-            setState(buildSeedHouse());
+        let next: HouseData | null = null;
+        if (raw) {
+          const parsed = JSON.parse(raw) as HouseData;
+          if (Array.isArray(parsed.members)) {
+            next = {
+              ...parsed,
+              homeId:
+                typeof parsed.homeId === 'string' && parsed.homeId
+                  ? parsed.homeId
+                  : makeId('home'),
+              activeMemberId:
+                parsed.activeMemberId ?? parsed.members[0]?.id ?? null,
+              categories: Array.isArray(parsed.categories)
+                ? parsed.categories
+                : [],
+              householdName:
+                typeof parsed.householdName === 'string' &&
+                parsed.householdName.trim()
+                  ? parsed.householdName
+                  : 'Mi hogar',
+              notices: Array.isArray(parsed.notices)
+                ? purgeExpired(
+                    parsed.notices
+                      .map(normalizeNotice)
+                      .filter(
+                        (notice): notice is HouseNotice => notice !== null,
+                      ),
+                  )
+                : [],
+            };
           }
         }
+        if (!next) next = buildSeedHouse();
+        if (joinHomeId) next = { ...next, homeId: joinHomeId };
+        if (!cancelled) {
+          if (savedDeviceId) setDeviceMemberIdState(savedDeviceId);
+          setState(next);
+          setJoinRequested(Boolean(joinHomeId));
+        }
       } catch {
-        if (!cancelled) setState(buildSeedHouse());
+        if (!cancelled) {
+          const fallback = buildSeedHouse();
+          setState(joinHomeId ? { ...fallback, homeId: joinHomeId } : fallback);
+          setJoinRequested(Boolean(joinHomeId));
+        }
       } finally {
-        if (!cancelled) setReady(true);
+        if (!cancelled) {
+          setReady(true);
+          setDeviceReady(true);
+        }
       }
     }
 
@@ -180,9 +211,9 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<HouseholdContextValue>(() => {
     const members = state?.members ?? [];
 
-    const addMember = (input: AddMemberInput) => {
+    const addMember = (input: AddMemberInput): Member | undefined => {
       const name = input.name.trim();
-      if (!name) return;
+      if (!name) return undefined;
       const member: Member = {
         id: makeId('member'),
         name,
@@ -194,6 +225,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
           ? { ...prev, members: [...prev.members, member] }
           : { members: [member], activeMemberId: null },
       );
+      return member;
     };
 
     const setActiveMember = (id: string) => {
@@ -202,6 +234,16 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
           ? { ...prev, activeMemberId: id }
           : prev,
       );
+    };
+
+    const assignDeviceMember = (id: string) => {
+      setState((prev) =>
+        prev && prev.members.some((member) => member.id === id)
+          ? { ...prev, activeMemberId: id }
+          : prev,
+      );
+      setDeviceMemberIdState(id);
+      setDeviceMemberId(id);
     };
 
     const updateMemberRole = (id: string, householdRole: HouseholdRole) => {
@@ -342,8 +384,13 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       categories: Array.isArray(state?.categories) ? state!.categories : [],
       householdName: state?.householdName ?? 'Mi hogar',
       notices: state?.notices ?? [],
+      homeId: state?.homeId ?? '',
+      joinRequested,
+      deviceMemberId,
+      deviceReady,
       addMember,
       setActiveMember,
+      assignDeviceMember,
       getMemberById: (id) => members.find((member) => member.id === id),
       updateMemberRole,
       removeMember,
@@ -353,7 +400,7 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       updateNotice,
       deleteNotice,
     };
-  }, [state, ready]);
+  }, [state, ready, deviceMemberId, deviceReady, joinRequested]);
 
   return (
     <HouseholdContext.Provider value={value}>

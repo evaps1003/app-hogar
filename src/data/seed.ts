@@ -27,6 +27,7 @@ export function buildSeedHouse(): HouseData {
       },
     ],
     activeMemberId: 'member-laura',
+    homeId: 'home-martinez',
     householdName: 'Casa de los Martínez',
     notices: [
       {

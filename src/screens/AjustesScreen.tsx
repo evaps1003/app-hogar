@@ -6,6 +6,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '../components/Screen';
 import { ScreenHeader } from '../components/ScreenHeader';
@@ -16,8 +17,11 @@ import { BottomSheet } from '../components/BottomSheet';
 import { NoticeSheet } from '../components/NoticeSheet';
 import { NoticeToast } from '../components/NoticeToast';
 import { PillButton } from '../components/PillButton';
+import { DevToolsPanel } from '../components/DevToolsPanel';
 import { useHousehold } from '../data/HouseholdContext';
+import { useDevTools } from '../data/DevToolsContext';
 import { noticeExpiryLabel } from '../data/notices';
+import { buildInviteUrl } from '../data/webLink';
 import { HouseholdRole, HouseNotice, Member, NoticeInput } from '../data/types';
 import { useTheme, buildTheme } from '../theme';
 import { PALETTES } from '../theme/palettes';
@@ -33,15 +37,17 @@ export function AjustesScreen() {
   const {
     members,
     activeMember,
-    setActiveMember,
     getMemberById,
     householdName,
+    homeId,
     renameHousehold,
     notices,
     addNotice,
     updateNotice,
     deleteNotice,
   } = useHousehold();
+  const devTools = useDevTools();
+  const { enabled, taps, tap } = devTools;
   const [roleTarget, setRoleTarget] = useState<Member | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [renameVisible, setRenameVisible] = useState(false);
@@ -88,9 +94,27 @@ export function AjustesScreen() {
     closeNoticeSheet();
   };
 
+  const handleInvite = async () => {
+    if (!homeId) {
+      setToast('Este dispositivo aún no tiene hogar asignado');
+      return;
+    }
+    const url = buildInviteUrl(homeId);
+    try {
+      await Clipboard.setStringAsync(url);
+      setToast('🔗 Enlace de invitación copiado al portapapeles');
+    } catch {
+      setToast(`Comparte este enlace: ${url}`);
+    }
+  };
+
   return (
     <Screen overlay={<NoticeToast message={toast} onDone={() => setToast(null)} />}>
-      <ScreenHeader title="Ajustes" subtitle="Apariencia, hogar y roles" />
+      <ScreenHeader
+        title="Ajustes"
+        subtitle="Apariencia, hogar y roles"
+        onPressTitle={tap}
+      />
 
       <SectionCard
         title="Mi Apariencia"
@@ -358,9 +382,7 @@ export function AjustesScreen() {
 
         {isLeader ? (
           <Pressable
-            onPress={() =>
-              setToast('🔗 Enlace de invitación copiado al portapapeles')
-            }
+            onPress={() => void handleInvite()}
             style={({ pressed }) => [
               styles.invitePill,
               {
@@ -387,62 +409,28 @@ export function AjustesScreen() {
         )}
       </SectionCard>
 
-      {__DEV__ ? (
-        <SectionCard
-          title="Usuario activo"
-          subtitle="Herramienta de prueba · simula quién usa la app ahora"
+      {enabled ? <DevToolsPanel onToast={setToast} /> : null}
+
+      <View style={styles.footer}>
+        <Pressable
+          onPress={tap}
+          hitSlop={12}
+          style={({ pressed }) => pressed && { opacity: 0.6 }}
         >
-          <Text style={[styles.sectionHint, { color: theme.colors.textSecondary }]}>
-            Solo la persona asignada puede tachar su tarea; las de la bolsa
-            común valen para cualquiera.
+          <Text
+            style={[styles.versionText, { color: theme.colors.tabInactive }]}
+          >
+            App Hogar · v1.0.0
           </Text>
-          <View style={[styles.chipsRow, { marginTop: 12 }]}>
-            {members.map((member) => {
-              const isActive = member.id === activeMember?.id;
-              return (
-                <Pressable
-                  key={member.id}
-                  onPress={() => setActiveMember(member.id)}
-                  style={[
-                    styles.userChip,
-                    {
-                      backgroundColor: isActive
-                        ? theme.colors.primarySoft
-                        : theme.colors.surfaceVariant,
-                      borderWidth: 1.5,
-                      borderColor: isActive
-                        ? theme.colors.primaryStrong
-                        : 'transparent',
-                    },
-                  ]}
-                >
-                  <MemberAvatar member={member} size={24} />
-                  <Text
-                    style={[
-                      styles.userChipText,
-                      {
-                        color: isActive
-                          ? theme.colors.primaryStrong
-                          : theme.colors.textSecondary,
-                        fontWeight: isActive ? '800' : '600',
-                      },
-                    ]}
-                  >
-                    {member.name}
-                  </Text>
-                  {isActive && (
-                    <Ionicons
-                      name="checkmark-circle"
-                      size={14}
-                      color={theme.colors.primaryStrong}
-                    />
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        </SectionCard>
-      ) : null}
+        </Pressable>
+        {taps > 0 && !enabled ? (
+          <Text
+            style={[styles.versionHint, { color: theme.colors.tabInactive }]}
+          >
+            Toca {5 - taps} más para abrir las herramientas de test
+          </Text>
+        ) : null}
+      </View>
 
       <MemberRoleSheet
         visible={roleTarget !== null}
@@ -488,21 +476,19 @@ export function AjustesScreen() {
 }
 
 const styles = StyleSheet.create({
-  chipsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-  },
-  userChip: {
-    flexDirection: 'row',
+  footer: {
     alignItems: 'center',
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 999,
+    paddingTop: 6,
+    paddingBottom: 8,
+    gap: 4,
   },
-  userChipText: {
-    fontSize: 13,
+  versionText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  versionHint: {
+    fontSize: 11,
+    fontWeight: '600',
   },
   houseRow: {
     flexDirection: 'row',

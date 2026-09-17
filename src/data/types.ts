@@ -85,6 +85,7 @@ export interface HouseNotice {
 export interface HouseData {
   members: Member[];
   activeMemberId: string | null;
+  homeId?: string;
   categories?: string[];
   householdName?: string;
   notices?: HouseNotice[];

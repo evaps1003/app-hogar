@@ -19,7 +19,18 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "name": "App Hogar",
+      "shortName": "App Hogar",
+      "description": "App colaborativa del hogar: tareas, compras, gastos y avisos.",
+      "lang": "es",
+      "themeColor": "#F8F2FF",
+      "backgroundColor": "#F8F2FF",
+      "favicon": "./assets/favicon.png",
+      "output": "single",
+      "bundler": "metro"
+    },
+    "experiments": {
+      "baseUrl": "/app-hogar"
     }
   }
 }

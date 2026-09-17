@@ -1,17 +1,57 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useNavigationTheme, useTheme } from './src/theme';
 import { ClockProvider } from './src/data/ClockContext';
-import { HouseholdProvider } from './src/data/HouseholdContext';
+import {
+  HouseholdProvider,
+  useHousehold,
+} from './src/data/HouseholdContext';
 import { ComprasProvider } from './src/data/ComprasContext';
 import { TasksProvider } from './src/data/TaskContext';
+import { DevToolsProvider } from './src/data/DevToolsContext';
+import { WelcomeScreen } from './src/components/WelcomeScreen';
 import { RootNavigator } from './src/navigation/RootNavigator';
 
 function AppShell() {
   const { theme } = useTheme();
   const navigationTheme = useNavigationTheme();
+  const { ready, deviceReady, deviceMemberId, members, joinRequested } =
+    useHousehold();
+  const [onboarded, setOnboarded] = useState(false);
+
+  if (!ready || !deviceReady) {
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: 'center',
+          justifyContent: 'center',
+          backgroundColor: theme.colors.background,
+        }}
+      >
+        <StatusBar style={theme.isDark ? 'light' : 'dark'} />
+        <ActivityIndicator color={theme.colors.primaryStrong} size="large" />
+      </View>
+    );
+  }
+
+  const deviceMemberExists =
+    deviceMemberId !== null &&
+    members.some((member) => member.id === deviceMemberId);
+
+  const showWelcome = !onboarded && (joinRequested || !deviceMemberExists);
+
+  if (showWelcome) {
+    return (
+      <>
+        <StatusBar style={theme.isDark ? 'light' : 'dark'} />
+        <WelcomeScreen onDone={() => setOnboarded(true)} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -31,7 +71,9 @@ export default function App() {
           <HouseholdProvider>
             <TasksProvider>
               <ComprasProvider>
-                <AppShell />
+                <DevToolsProvider>
+                  <AppShell />
+                </DevToolsProvider>
               </ComprasProvider>
             </TasksProvider>
           </HouseholdProvider>

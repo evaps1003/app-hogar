@@ -113,6 +113,7 @@ interface ComprasContextValue {
   updateItem: (itemId: string, input: NewItemInput) => void;
   toggleItem: (itemId: string) => void;
   deleteItem: (itemId: string) => void;
+  advanceShoppingRotation: () => void;
   addExpense: (input: ExpenseInput) => void;
   settleList: (listId: string) => void;
   addCategory: (name: string) => void;
@@ -609,6 +610,33 @@ export function ComprasProvider({ children }: { children: React.ReactNode }) {
       );
     };
 
+    const advanceShoppingRotation = () => {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((item) => {
+                if (
+                  !item.rotation ||
+                  item.rotation.memberIds.length === 0
+                ) {
+                  return item;
+                }
+                return {
+                  ...item,
+                  rotation: {
+                    ...item.rotation,
+                    currentIndex:
+                      (item.rotation.currentIndex + 1) %
+                      item.rotation.memberIds.length,
+                  },
+                };
+              }),
+            }
+          : prev,
+      );
+    };
+
     const addExpense = (input: ExpenseInput) => {
       const participants = Array.from(
         new Set([...input.participants, input.paidBy]),
@@ -819,6 +847,7 @@ export function ComprasProvider({ children }: { children: React.ReactNode }) {
       updateItem,
       toggleItem,
       deleteItem,
+      advanceShoppingRotation,
       addExpense,
       settleList,
       addCategory,
