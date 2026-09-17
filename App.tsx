@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useNavigationTheme, useTheme } from './src/theme';
 import { ClockProvider } from './src/data/ClockContext';
 import { HouseholdProvider } from './src/data/HouseholdContext';
+import { ComprasProvider } from './src/data/ComprasContext';
 import { TasksProvider } from './src/data/TaskContext';
 import { RootNavigator } from './src/navigation/RootNavigator';
 
@@ -29,7 +30,9 @@ export default function App() {
         <ClockProvider>
           <HouseholdProvider>
             <TasksProvider>
-              <AppShell />
+              <ComprasProvider>
+                <AppShell />
+              </ComprasProvider>
             </TasksProvider>
           </HouseholdProvider>
         </ClockProvider>

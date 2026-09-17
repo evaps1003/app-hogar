@@ -8,7 +8,15 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { buildSeedHouse } from './seed';
-import { HouseData, HouseholdRole, Member, MemberColor } from './types';
+import { computeNoticeExpiry, isNoticeExpired } from './notices';
+import {
+  HouseData,
+  HouseholdRole,
+  HouseNotice,
+  Member,
+  MemberColor,
+  NoticeInput,
+} from './types';
 
 const STORAGE_KEY = 'hogar.household.v1';
 
@@ -24,11 +32,18 @@ interface HouseholdContextValue {
   activeMember: Member | null;
   ready: boolean;
   categories: string[];
+  householdName: string;
+  notices: HouseNotice[];
   addMember: (input: AddMemberInput) => void;
   setActiveMember: (id: string) => void;
   getMemberById: (id: string | null) => Member | undefined;
   updateMemberRole: (id: string, householdRole: HouseholdRole) => void;
+  removeMember: (id: string) => void;
   addCategory: (name: string) => void;
+  renameHousehold: (name: string) => void;
+  addNotice: (input: NoticeInput) => void;
+  updateNotice: (id: string, input: NoticeInput) => void;
+  deleteNotice: (id: string) => void;
 }
 
 const HouseholdContext = createContext<HouseholdContextValue | undefined>(
@@ -39,6 +54,30 @@ function makeId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}${Math.random()
     .toString(36)
     .slice(2, 7)}`;
+}
+
+function normalizeNotice(raw: unknown): HouseNotice | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const n = raw as Partial<HouseNotice>;
+  if (typeof n.text !== 'string' || !n.text.trim()) return null;
+  const duration =
+    n.duration === 'hours' || n.duration === 'today' || n.duration === 'week'
+      ? n.duration
+      : 'never';
+  return {
+    id: typeof n.id === 'string' && n.id ? n.id : makeId('notice'),
+    text: n.text.trim(),
+    createdBy: typeof n.createdBy === 'string' ? n.createdBy : null,
+    createdAt: typeof n.createdAt === 'number' ? n.createdAt : Date.now(),
+    duration,
+    hours:
+      duration === 'hours' && typeof n.hours === 'number' ? n.hours : undefined,
+    expiresAt: typeof n.expiresAt === 'number' ? n.expiresAt : null,
+  };
+}
+
+function purgeExpired(notices: HouseNotice[], now = Date.now()): HouseNotice[] {
+  return notices.filter((notice) => !isNoticeExpired(notice, now));
 }
 
 const COLOR_ORDER: MemberColor[] = ['primary', 'highlight', 'accent'];
@@ -79,6 +118,20 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
                 categories: Array.isArray(parsed.categories)
                   ? parsed.categories
                   : [],
+                householdName:
+                  typeof parsed.householdName === 'string' &&
+                  parsed.householdName.trim()
+                    ? parsed.householdName
+                    : 'Mi hogar',
+                notices: Array.isArray(parsed.notices)
+                  ? purgeExpired(
+                      parsed.notices
+                        .map(normalizeNotice)
+                        .filter(
+                          (notice): notice is HouseNotice => notice !== null,
+                        ),
+                    )
+                  : [],
               });
             } else {
               setState(buildSeedHouse());
@@ -109,6 +162,21 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)).catch(() => {});
   }, [state]);
 
+  useEffect(() => {
+    if (!state) return;
+    const id = setInterval(() => {
+      const now = Date.now();
+      const notices = state.notices ?? [];
+      if (!notices.some((notice) => isNoticeExpired(notice, now))) return;
+      setState((prev) =>
+        prev
+          ? { ...prev, notices: purgeExpired(prev.notices ?? [], now) }
+          : prev,
+      );
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [state]);
+
   const value = useMemo<HouseholdContextValue>(() => {
     const members = state?.members ?? [];
 
@@ -137,12 +205,109 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
     };
 
     const updateMemberRole = (id: string, householdRole: HouseholdRole) => {
+      const target = members.find((member) => member.id === id);
+      if (
+        target?.householdRole === 'leader' &&
+        householdRole !== 'leader' &&
+        members.filter((member) => member.householdRole === 'leader')
+          .length <= 1
+      ) {
+        return;
+      }
       setState((prev) =>
         prev
           ? {
               ...prev,
               members: prev.members.map((member) =>
                 member.id === id ? { ...member, householdRole } : member,
+              ),
+            }
+          : prev,
+      );
+    };
+
+    const removeMember = (id: string) => {
+      if (activeMember?.householdRole !== 'leader') return;
+      if (id === state?.activeMemberId) return;
+      const target = members.find((member) => member.id === id);
+      if (!target) return;
+      const leaderCount = members.filter(
+        (member) => member.householdRole === 'leader',
+      ).length;
+      if (target.householdRole === 'leader' && leaderCount <= 1) return;
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              members: prev.members.filter((member) => member.id !== id),
+            }
+          : prev,
+      );
+    };
+
+    const renameHousehold = (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      if (activeMember?.householdRole !== 'leader') return;
+      setState((prev) =>
+        prev ? { ...prev, householdName: trimmed } : prev,
+      );
+    };
+
+    const addNotice = (input: NoticeInput) => {
+      const text = input.text.trim();
+      if (!text) return;
+      const now = Date.now();
+      const notice: HouseNotice = {
+        id: makeId('notice'),
+        text,
+        createdBy: activeMember?.id ?? null,
+        createdAt: now,
+        duration: input.duration,
+        hours:
+          input.duration === 'hours' ? (input.hours ?? 2) : undefined,
+        expiresAt: computeNoticeExpiry(input.duration, input.hours),
+      };
+      setState((prev) =>
+        prev
+          ? { ...prev, notices: [notice, ...(prev.notices ?? [])] }
+          : prev,
+      );
+    };
+
+    const updateNotice = (id: string, input: NoticeInput) => {
+      const text = input.text.trim();
+      if (!text) return;
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              notices: (prev.notices ?? []).map((notice) =>
+                notice.id === id
+                  ? {
+                      ...notice,
+                      text,
+                      duration: input.duration,
+                      hours:
+                        input.duration === 'hours'
+                          ? (input.hours ?? 2)
+                          : undefined,
+                      expiresAt: computeNoticeExpiry(input.duration, input.hours),
+                    }
+                  : notice,
+              ),
+            }
+          : prev,
+      );
+    };
+
+    const deleteNotice = (id: string) => {
+      setState((prev) =>
+        prev
+          ? {
+              ...prev,
+              notices: (prev.notices ?? []).filter(
+                (notice) => notice.id !== id,
               ),
             }
           : prev,
@@ -175,11 +340,18 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       activeMember,
       ready,
       categories: Array.isArray(state?.categories) ? state!.categories : [],
+      householdName: state?.householdName ?? 'Mi hogar',
+      notices: state?.notices ?? [],
       addMember,
       setActiveMember,
       getMemberById: (id) => members.find((member) => member.id === id),
       updateMemberRole,
+      removeMember,
       addCategory,
+      renameHousehold,
+      addNotice,
+      updateNotice,
+      deleteNotice,
     };
   }, [state, ready]);
 

@@ -14,13 +14,13 @@ interface TaskRowProps {
   onPressCheck: () => void;
   muted?: boolean;
   locked?: boolean;
-  onRequestSwap?: () => void;
   onAssume?: () => void;
   onAvatarPress?: () => void;
   assignOpen?: boolean;
   members?: Member[];
   onAssign?: (assigneeId: string | null) => void;
   onPressEdit?: () => void;
+  onDelete?: () => void;
 }
 
 export function TaskRow({
@@ -29,13 +29,13 @@ export function TaskRow({
   onPressCheck,
   muted = false,
   locked = false,
-  onRequestSwap,
   onAssume,
   onAvatarPress,
   assignOpen = false,
   members = [],
   onAssign,
   onPressEdit,
+  onDelete,
 }: TaskRowProps) {
   const { theme } = useTheme();
   const [hintVisible, setHintVisible] = useState(false);
@@ -60,6 +60,9 @@ export function TaskRow({
 
   const hasQuickAssign = !!onAvatarPress && !task.completed && !task.enSubasta;
   const isSwapIncoming = !task.completed && task.enSubasta && !!onAssume;
+
+  const legacyTask = task as Task & { name?: string };
+  const titleText = (task.title ?? legacyTask.name ?? '').trim() || 'Tarea';
 
   const quickAvatar = () => {
     if (!hasQuickAssign) return null;
@@ -165,58 +168,6 @@ export function TaskRow({
     if (hasQuickAssign) {
       return quickAvatar();
     }
-    if (onRequestSwap) {
-      return (
-        <Pressable
-          onPress={onRequestSwap}
-          hitSlop={8}
-          style={({ pressed }) => [
-            styles.swapButton,
-            {
-              backgroundColor: theme.colors.surfaceVariant,
-              borderColor: theme.colors.divider,
-              transform: [{ scale: pressed ? 0.92 : 1 }],
-            },
-          ]}
-        >
-          <Ionicons
-            name="swap-horizontal"
-            size={14}
-            color={theme.colors.textSecondary}
-          />
-          <Text
-            style={[
-              styles.swapButtonText,
-              { color: theme.colors.textSecondary },
-            ]}
-          >
-            cambio
-          </Text>
-        </Pressable>
-      );
-    }
-    if (assignee && task.rotacion) {
-      return (
-        <View
-          style={[
-            styles.turnPill,
-            { backgroundColor: theme.colors.surfaceVariant },
-          ]}
-        >
-          <Ionicons
-            name="repeat"
-            size={11}
-            color={theme.colors.primaryStrong}
-          />
-          <Text
-            numberOfLines={1}
-            style={[styles.turnPillText, { color: theme.colors.textSecondary }]}
-          >
-            Turno: {assignee.name}
-          </Text>
-        </View>
-      );
-    }
     if (assignee) {
       return <MemberBadge member={assignee} compact />;
     }
@@ -240,8 +191,6 @@ export function TaskRow({
               style={({ pressed }) => ({ opacity: pressed ? 0.55 : 1 })}
             >
               <Text
-                numberOfLines={isSwapIncoming ? undefined : 1}
-                ellipsizeMode="tail"
                 style={[
                   styles.title,
                   {
@@ -252,13 +201,11 @@ export function TaskRow({
                   task.completed && styles.completedTitle,
                 ]}
               >
-                {task.title}
+                {titleText}
               </Text>
             </Pressable>
           ) : (
             <Text
-              numberOfLines={isSwapIncoming ? undefined : 1}
-              ellipsizeMode="tail"
               style={[
                 styles.title,
                 {
@@ -269,7 +216,7 @@ export function TaskRow({
                 task.completed && styles.completedTitle,
               ]}
             >
-              {task.title}
+              {titleText}
             </Text>
           )}
           {isSwapIncoming ? (
@@ -311,11 +258,53 @@ export function TaskRow({
               </Pressable>
             </View>
           ) : null}
+          {!isSwapIncoming && (
+            <View style={styles.metaRow}>
+              {task.urgent && !task.completed ? (
+                <View
+                  style={[
+                    styles.urgentPill,
+                    { backgroundColor: theme.colors.warningSoft },
+                  ]}
+                >
+                  <Ionicons
+                    name="flame"
+                    size={11}
+                    color={theme.colors.warningStrong}
+                  />
+                  <Text
+                    style={[
+                      styles.urgentPillText,
+                      { color: theme.colors.warningStrong },
+                    ]}
+                  >
+                    Urgente
+                  </Text>
+                </View>
+              ) : null}
+              {!task.completed && !task.enSubasta && (
+                <ScheduleBadge schedule={task.schedule} />
+              )}
+              {showRightBadge()}
+            </View>
+          )}
         </View>
-        {!isSwapIncoming && !task.completed && !task.enSubasta && (
-          <ScheduleBadge schedule={task.schedule} />
-        )}
-        {!isSwapIncoming && showRightBadge()}
+        {onDelete && task.completed ? (
+          <Pressable
+            onPress={onDelete}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.deleteBtn,
+              { transform: [{ scale: pressed ? 0.85 : 1 }] },
+            ]}
+          >
+            <Ionicons
+              name="trash-outline"
+              size={16}
+              color={theme.colors.tabInactive}
+            />
+          </Pressable>
+        ) : null}
       </View>
 
       {assignOpen && members.length > 0 && onAssign ? (
@@ -432,13 +421,35 @@ const styles = StyleSheet.create({
     gap: 8,
     marginTop: 6,
   },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 4,
+  },
   title: {
     fontSize: 15,
     fontWeight: '600',
+    lineHeight: 20,
+    flexShrink: 1,
   },
   completedTitle: {
     textDecorationLine: 'line-through',
     textDecorationColor: '#C9BED1',
+  },
+  urgentPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  urgentPillText: {
+    fontSize: 11,
+    fontWeight: '800',
   },
   quickChip: {
     flexDirection: 'row',
@@ -479,20 +490,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
-  turnPill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-    maxWidth: 132,
-  },
-  turnPillText: {
-    flex: 1,
-    fontSize: 11,
-    fontWeight: '700',
-  },
   swapPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -504,19 +501,6 @@ const styles = StyleSheet.create({
   },
   swapPillText: {
     flex: 1,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  swapButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 999,
-    borderWidth: 1,
-  },
-  swapButtonText: {
     fontSize: 11,
     fontWeight: '700',
   },
@@ -552,5 +536,8 @@ const styles = StyleSheet.create({
   assignChipText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+  deleteBtn: {
+    padding: 4,
   },
 });

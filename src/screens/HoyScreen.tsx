@@ -9,15 +9,23 @@ import { SectionCard } from '../components/SectionCard';
 import { SectionDivider } from '../components/SectionDivider';
 import { EmptyLine } from '../components/EmptyLine';
 import { TaskRow } from '../components/TaskRow';
+import { MemberAvatar } from '../components/MemberAvatar';
 import { DayStrip } from '../components/DayStrip';
 import { useTasks } from '../data/TaskContext';
 import { useHousehold } from '../data/HouseholdContext';
+import { isNoticeExpired } from '../data/notices';
 import {
   DAY_LABELS,
   DAY_LONG_LABELS,
   DAY_SHORT_LABELS,
   WEEKDAY_ORDER,
+  formatSchedule,
   getCurrentWeekKey,
+  rotatingMemberOn,
+  rotatingOccursOn,
+  scheduledOccursOn,
+  scheduleRangeKeys,
+  toDateKey,
 } from '../data/schedule';
 import { DayOfWeek, Task } from '../data/types';
 import { RootTabParamList } from '../navigation/types';
@@ -51,10 +59,10 @@ export function HoyScreen() {
     canCheckTask,
     reopen,
     swapRequests,
-    requestSwap,
     assumeTask,
+    tasks,
   } = useTasks();
-  const { getMemberById, activeMember } = useHousehold();
+  const { getMemberById, activeMember, notices } = useHousehold();
   const { theme } = useTheme();
 
   const activeId = activeMember?.id;
@@ -64,6 +72,62 @@ export function HoyScreen() {
   const [view, setView] = useState<PersonalView>('hoy');
   const [swapExpanded, setSwapExpanded] = useState(false);
   const [weekOffset, setWeekOffset] = useState(0);
+  const [selectedMonthDay, setSelectedMonthDay] = useState<number | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+
+  const noticesActive = useMemo(
+    () => notices.filter((notice) => !isNoticeExpired(notice)),
+    [notices],
+  );
+
+  const renderAvisos = () => {
+    if (noticesActive.length === 0) return null;
+    return (
+      <View style={styles.avisosStack}>
+        {noticesActive.map((notice) => {
+          const author = getMemberById(notice.createdBy);
+          return (
+            <View
+              key={notice.id}
+              style={[
+                styles.avisoPill,
+                { backgroundColor: theme.colors.highlightSoft },
+              ]}
+            >
+              {author ? (
+                <MemberAvatar member={author} size={24} />
+              ) : (
+                <View
+                  style={[
+                    styles.avisoAuthor,
+                    { backgroundColor: theme.colors.highlightStrong },
+                  ]}
+                >
+                  <Ionicons name="home" size={12} color="#FFFFFF" />
+                </View>
+              )}
+              <Text style={[styles.avisoText, { color: theme.colors.textPrimary }]}>
+                <Text
+                  style={[
+                    styles.avisoLabel,
+                    { color: theme.colors.highlightStrong },
+                  ]}
+                >
+                  📌 Aviso:{' '}
+                </Text>
+                {notice.text}
+              </Text>
+              <Ionicons
+                name="pin"
+                size={14}
+                color={theme.colors.highlightStrong}
+              />
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
 
   const resetToToday = () => {
     setSelectedDay(new Date().getDay() as DayOfWeek);
@@ -85,32 +149,64 @@ export function HoyScreen() {
     [pendingAssigned, activeId],
   );
 
+  const personalBase = useMemo(
+    () => tasks.filter((t) => t.assigneeId !== null && !t.completed),
+    [tasks],
+  );
+
+  const isYoursOn = (t: Task, date: Date): boolean =>
+    t.rotacion
+      ? rotatingMemberOn(t.rotacion, date) === activeId
+      : t.assigneeId === activeId;
+
+  const occursOn = (t: Task, date: Date): boolean => {
+    const s = t.schedule;
+    if (!s) return date.toDateString() === new Date().toDateString();
+    if (s.type === 'flexible') return false;
+    if (t.rotacion) return rotatingOccursOn(s, t.rotacion, date);
+    if (s.type === 'once') {
+      const key = toDateKey(date);
+      if (key < s.dueDate) return false;
+      if (s.endDate && key > s.endDate) return false;
+      return true;
+    }
+    return scheduledOccursOn(s, date);
+  };
+
+  const matchesOn = (t: Task, date: Date): boolean =>
+    isYoursOn(t, date) && occursOn(t, date);
+
   const weekData = useMemo(() => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const today = new Date();
     const startOfWeek = new Date(today);
     startOfWeek.setDate(today.getDate() - (today.getDay() === 0 ? 6 : today.getDay() - 1) + weekOffset * 7);
 
-    return WEEKDAY_ORDER.map((dow, index) => {
+    const occurrences = WEEKDAY_ORDER.map((dow, index) => {
       const date = new Date(startOfWeek);
       date.setDate(startOfWeek.getDate() + index);
-      const dateKey = getCurrentWeekKey(date);
 
-      const tasks = userTasks.filter((t) => {
-        const s = t.schedule;
-        if (!s) return date.toDateString() === now.toDateString();
-        if (s.type === 'flexible') return false;
-        if (s.type === 'once') {
-          const dueDate = new Date(s.dueDate + 'T00:00:00');
-          return dueDate.toDateString() === date.toDateString();
-        }
-        if (!s.days.includes(dow)) return false;
-        return s.repeatWeekly || s.weekKey === dateKey;
-      });
+      const tasks = personalBase.filter((t) => matchesOn(t, date));
 
       return { dow, date, tasks };
     });
-  }, [userTasks, weekOffset]);
+
+    const anchorIndex = new Map<string, number>();
+    occurrences.forEach((occ, i) => {
+      occ.tasks.forEach((t) => {
+        const range = t.schedule ? scheduleRangeKeys(t.schedule) : null;
+        if (range && !anchorIndex.has(t.id)) anchorIndex.set(t.id, i);
+      });
+    });
+
+    return occurrences.map((occ, i) => ({
+      ...occ,
+      tasks: occ.tasks.filter((t) => {
+        const range = t.schedule ? scheduleRangeKeys(t.schedule) : null;
+        if (!range) return true;
+        return anchorIndex.get(t.id) === i;
+      }),
+    }));
+  }, [personalBase, weekOffset]);
 
   const monthView = useMemo(() => {
     const now = new Date();
@@ -121,7 +217,6 @@ export function HoyScreen() {
     const startOffset = (firstDow + 6) % 7;
     const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
 
-    const todayStr = now.toDateString();
     const todayDate = now.getDate();
     const todayMonth = now.getMonth();
 
@@ -133,25 +228,25 @@ export function HoyScreen() {
     const dayTasksMap = new Map<number, Task[]>();
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(year, month, d);
-      const dow = date.getDay() as DayOfWeek;
-      const dateKey = getCurrentWeekKey(date);
-      const matched = userTasks.filter((t) => {
-        if (t.completed) return false;
-        const s = t.schedule;
-        if (!s) return date.toDateString() === todayStr;
-        if (s.type === 'flexible') return s.weekKey === dateKey;
-        if (s.type === 'once') {
-          const dueDate = new Date(s.dueDate + 'T00:00:00');
-          return dueDate.toDateString() === date.toDateString();
-        }
-        if (!s.days.includes(dow)) return false;
-        return s.repeatWeekly || s.weekKey === dateKey;
-      });
+      const matched = personalBase.filter((t) => matchesOn(t, date));
       if (matched.length > 0) dayTasksMap.set(d, matched);
     }
 
-    return { cells, dayTasksMap, todayDate, todayMonth };
-  }, [userTasks]);
+    const rangeTaskIds = new Set<string>();
+    dayTasksMap.forEach((tasks) => {
+      tasks.forEach((t) => {
+        if (
+          !rangeTaskIds.has(t.id) &&
+          t.schedule &&
+          scheduleRangeKeys(t.schedule)
+        ) {
+          rangeTaskIds.add(t.id);
+        }
+      });
+    });
+
+    return { cells, dayTasksMap, todayDate, todayMonth, rangeTaskIds };
+  }, [personalBase]);
 
   const renderPills = () => (
     <View style={styles.pillRow}>
@@ -258,6 +353,8 @@ export function HoyScreen() {
 
   const renderHoy = () => (
     <>
+      {renderAvisos()}
+
       <DayStrip
         key={stripKey}
         selected={selectedDay}
@@ -284,11 +381,6 @@ export function HoyScreen() {
               assignee={getMemberById(task.assigneeId)}
               onPressCheck={() => toggleAssigned(task.id)}
               locked={!canCheckTask(task)}
-              onRequestSwap={
-                !task.completed && !task.enSubasta
-                  ? () => requestSwap(task.id)
-                  : undefined
-              }
             />
           ))
         )}
@@ -304,11 +396,6 @@ export function HoyScreen() {
                 assignee={getMemberById(task.assigneeId)}
                 onPressCheck={() => toggleAssigned(task.id)}
                 locked={!canCheckTask(task)}
-                onRequestSwap={
-                  !task.completed && !task.enSubasta
-                    ? () => requestSwap(task.id)
-                    : undefined
-                }
               />
             ))}
           </>
@@ -428,15 +515,10 @@ export function HoyScreen() {
                     <TaskRow
                       key={task.id}
                       task={task}
-                      assignee={getMemberById(task.assigneeId)}
-                      onPressCheck={() => toggleAssigned(task.id)}
-                      locked={!canCheckTask(task)}
-                      onRequestSwap={
-                        !task.completed && !task.enSubasta
-                          ? () => requestSwap(task.id)
-                          : undefined
-                      }
-                    />
+assignee={getMemberById(task.assigneeId)}
+                onPressCheck={() => toggleAssigned(task.id)}
+                locked={!canCheckTask(task)}
+              />
                   ))}
                 </View>
               );
@@ -462,11 +544,6 @@ export function HoyScreen() {
                 assignee={getMemberById(task.assigneeId)}
                 onPressCheck={() => toggleAssigned(task.id)}
                 locked={!canCheckTask(task)}
-                onRequestSwap={
-                  !task.completed && !task.enSubasta
-                    ? () => requestSwap(task.id)
-                    : undefined
-                }
               />
             ))}
           </SectionCard>
@@ -476,7 +553,7 @@ export function HoyScreen() {
   };
 
   const renderMes = () => {
-    const { cells, dayTasksMap, todayDate, todayMonth } = monthView;
+    const { cells, dayTasksMap, todayDate, todayMonth, rangeTaskIds } = monthView;
     const now = new Date();
     const isCurrentMonth = now.getMonth() === todayMonth;
 
@@ -512,12 +589,8 @@ export function HoyScreen() {
       return `${hex}${a}`;
     };
 
-    const isContinuousTask = (t: Task) => {
-      const s = t.schedule;
-      if (!s) return false;
-      if (s.type === 'flexible' || s.type === 'once') return true;
-      return s.repeatWeekly || s.days.length > 1;
-    };
+    const isRangeTask = (t: Task) =>
+      !!t.schedule && scheduleRangeKeys(t.schedule) !== null;
 
     const seen = new Set<string>();
     const legendTasks: Task[] = [];
@@ -529,6 +602,28 @@ export function HoyScreen() {
         }
       });
     });
+
+    const monthLabel = MONTH_NAMES[now.getMonth()];
+
+    let legendList: Task[] = legendTasks;
+    let legendTitle = 'Tareas del mes';
+    let legendSubtitle = `${legendTasks.length} tarea${legendTasks.length !== 1 ? 's' : ''} pendiente${legendTasks.length !== 1 ? 's' : ''}`;
+
+    if (selectedTaskId) {
+      const picked = legendTasks.find((t) => t.id === selectedTaskId);
+      legendList = picked ? [picked] : [];
+      if (picked) {
+        legendTitle = 'Tarea seleccionada';
+        legendSubtitle = formatSchedule(picked.schedule) ?? 'Pendiente';
+      } else {
+        legendSubtitle = '';
+      }
+    } else if (selectedMonthDay != null) {
+      legendList = dayTasksMap.get(selectedMonthDay) ?? [];
+      const n = legendList.length;
+      legendTitle = `${n} tarea${n !== 1 ? 's' : ''} el día ${selectedMonthDay}`;
+      legendSubtitle = `${monthLabel} de ${now.getFullYear()}`;
+    }
 
     return (
       <>
@@ -566,16 +661,18 @@ export function HoyScreen() {
               if (day === null) return;
               const tasks = dayTasksMap.get(day) ?? [];
               tasks.forEach((t) => {
+                if (!rangeTaskIds.has(t.id)) return;
                 if (!tasksInRow.has(t.id)) tasksInRow.set(t.id, { task: t, cols: [] });
                 tasksInRow.get(t.id)!.cols.push(col);
               });
             });
 
-            const LANES = 6;
+            const LANES = 4;
             const laneUsed = Array.from({ length: LANES }, () => new Set<number>());
             const colPct = 100 / 7;
             const bars: {
               key: string;
+              taskId: string;
               color: string;
               left: number;
               width: number;
@@ -620,10 +717,11 @@ export function HoyScreen() {
                 span.forEach((c) => laneUsed[lane].add(c));
                 bars.push({
                   key: `${row}-${task.id}-${r.join('-')}`,
+                  taskId: task.id,
                   color: withOpacity(taskColor(task), 0.6),
                   left: r[0] * colPct,
                   width: r.length * colPct,
-                  top: 9 + lane * 7,
+                  top: 30 + lane * 7,
                 });
               });
             });
@@ -633,13 +731,34 @@ export function HoyScreen() {
                 <View style={styles.calRow}>
                   {slice.map((day, col) => {
                     const isToday = isCurrentMonth && day === now.getDate();
-                    const dayTasks = day === null ? undefined : dayTasksMap.get(day);
-                    const overflow =
-                      day && dayTasks
-                        ? dayTasks.filter((t) => overflowTaskIds.has(t.id)).length
-                        : 0;
+                    const isSelected =
+                      day !== null && selectedMonthDay === day;
+                    const dayTasks =
+                      day === null ? undefined : dayTasksMap.get(day);
+                    const dots = dayTasks
+                      ? dayTasks.filter((t) => !rangeTaskIds.has(t.id))
+                      : [];
+                    const shownDots = dots.slice(0, 3);
+                    const extraDots = dots.length > 3 ? dots.length - 3 : 0;
                     return (
-                      <View key={col} style={styles.calCell}>
+                      <Pressable
+                        key={col}
+                        disabled={day === null}
+                        onPress={() => {
+                          if (day === null) return;
+                          setSelectedTaskId(null);
+                          setSelectedMonthDay((prev) =>
+                            prev === day ? null : day,
+                          );
+                        }}
+                        style={[
+                          styles.calCell,
+                          isSelected && {
+                            backgroundColor: theme.colors.primarySoft,
+                            borderRadius: 10,
+                          },
+                        ]}
+                      >
                         {day !== null ? (
                           <Text
                             style={[
@@ -655,25 +774,50 @@ export function HoyScreen() {
                             {day}
                           </Text>
                         ) : null}
-                        {overflow > 0 ? (
-                          <Text
-                            style={[
-                              styles.calDotMore,
-                              { color: theme.colors.textSecondary },
-                            ]}
-                          >
-                            +{overflow}
-                          </Text>
+                        {shownDots.length > 0 ? (
+                          <View style={styles.calDotsRow}>
+                            {shownDots.map((t) => (
+                              <View
+                                key={t.id}
+                                style={[
+                                  styles.calDot,
+                                  {
+                                    backgroundColor: withOpacity(
+                                      taskColor(t),
+                                      0.85,
+                                    ),
+                                  },
+                                ]}
+                              />
+                            ))}
+                            {extraDots > 0 ? (
+                              <Text
+                                style={[
+                                  styles.calDotMore,
+                                  { color: theme.colors.textSecondary },
+                                ]}
+                              >
+                                +{extraDots}
+                              </Text>
+                            ) : null}
+                          </View>
                         ) : null}
-                      </View>
+                      </Pressable>
                     );
                   })}
                 </View>
                 {bars.length > 0 ? (
-                  <View style={styles.calBarsLayer} pointerEvents="none">
+                  <View style={styles.calBarsLayer} pointerEvents="box-none">
                     {bars.map((bar) => (
-                      <View
+                      <Pressable
                         key={bar.key}
+                        hitSlop={8}
+                        onPress={() => {
+                          setSelectedMonthDay(null);
+                          setSelectedTaskId((prev) =>
+                            prev === bar.taskId ? null : bar.taskId,
+                          );
+                        }}
                         style={[
                           styles.calBar,
                           {
@@ -694,8 +838,8 @@ export function HoyScreen() {
 
         {legendTasks.length > 0 ? (
           <SectionCard
-            title="Tareas del mes"
-            subtitle={`${legendTasks.length} tarea${legendTasks.length !== 1 ? 's' : ''} pendiente${legendTasks.length !== 1 ? 's' : ''}`}
+            title={legendTitle}
+            subtitle={legendSubtitle || undefined}
             style={{
               backgroundColor: theme.colors.surfaceVariant,
               borderRadius: 20,
@@ -703,32 +847,32 @@ export function HoyScreen() {
               elevation: 0,
             }}
           >
-            {legendTasks.map((task) => {
-              const color = withOpacity(taskColor(task), 0.4);
-              const continuous = isContinuousTask(task);
-              return (
-                <View key={task.id} style={styles.legendRow}>
-                  <View
-                    style={
-                      continuous
-                        ? [styles.legendBarHighlight, { backgroundColor: color }]
-                        : [styles.legendDotHighlight, { backgroundColor: color }]
-                    }
-                  />
-                  <TaskRow
-                    task={task}
-                    assignee={getMemberById(task.assigneeId)}
-                    onPressCheck={() => toggleAssigned(task.id)}
-                    locked={!canCheckTask(task)}
-                    onRequestSwap={
-                      !task.completed && !task.enSubasta
-                        ? () => requestSwap(task.id)
-                        : undefined
-                    }
-                  />
-                </View>
-              );
-            })}
+            {legendList.length > 0 ? (
+              legendList.map((task) => {
+                const color = withOpacity(taskColor(task), 0.4);
+                const range = isRangeTask(task);
+                return (
+                  <View key={task.id} style={styles.legendRow}>
+                    <View
+                      style={
+                        range
+                          ? [styles.legendBarHighlight, { backgroundColor: color }]
+                          : [styles.legendDotHighlight, { backgroundColor: color }]
+                      }
+                    />
+                    <View style={styles.legendBody}>
+                      <TaskRow
+                        task={task}
+                        onPressCheck={() => toggleAssigned(task.id)}
+                        locked={!canCheckTask(task)}
+                      />
+                    </View>
+                  </View>
+                );
+              })
+            ) : (
+              <EmptyLine message="Sin tareas este día ✨" />
+            )}
           </SectionCard>
         ) : (
           <EmptyLine message="Sin tareas este mes ✨" />
@@ -757,6 +901,34 @@ export function HoyScreen() {
 }
 
 const styles = StyleSheet.create({
+  avisosStack: {
+    gap: 8,
+    marginBottom: 14,
+  },
+  avisoPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 16,
+  },
+  avisoAuthor: {
+    width: 24,
+    height: 24,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avisoText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    lineHeight: 18,
+  },
+  avisoLabel: {
+    fontWeight: '800',
+  },
   pillRow: {
     flexDirection: 'row',
     gap: 8,
@@ -844,6 +1016,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     zIndex: 2,
   },
+  calDotsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+    marginTop: 4,
+    zIndex: 2,
+  },
+  calDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 999,
+  },
   calDotMore: {
     fontSize: 8,
     fontWeight: '700',
@@ -868,6 +1053,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
+  },
+  legendBody: {
+    flex: 1,
   },
   legendDotHighlight: {
     width: 22,

@@ -42,3 +42,4 @@ yarn-error.*
 
 # Metro log
 expo-qr.log
+metro.log

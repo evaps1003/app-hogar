@@ -1,16 +1,24 @@
 import React, { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '../components/Screen';
 import { ScreenHeader } from '../components/ScreenHeader';
 import { SectionCard } from '../components/SectionCard';
 import { MemberAvatar } from '../components/MemberAvatar';
 import { MemberRoleSheet } from '../components/MemberRoleSheet';
+import { BottomSheet } from '../components/BottomSheet';
+import { NoticeSheet } from '../components/NoticeSheet';
 import { NoticeToast } from '../components/NoticeToast';
 import { PillButton } from '../components/PillButton';
 import { useHousehold } from '../data/HouseholdContext';
-import { useTasks } from '../data/TaskContext';
-import { HouseholdRole, Member } from '../data/types';
+import { noticeExpiryLabel } from '../data/notices';
+import { HouseholdRole, HouseNotice, Member, NoticeInput } from '../data/types';
 import { useTheme, buildTheme } from '../theme';
 import { PALETTES } from '../theme/palettes';
 
@@ -22,109 +30,74 @@ const ROLE_LABELS: Record<HouseholdRole, string> = {
 
 export function AjustesScreen() {
   const { theme, setPaletteById } = useTheme();
-  const { members, activeMember, setActiveMember, getMemberById } =
-    useHousehold();
-  const { tasks, advanceAllTurns } = useTasks();
+  const {
+    members,
+    activeMember,
+    setActiveMember,
+    getMemberById,
+    householdName,
+    renameHousehold,
+    notices,
+    addNotice,
+    updateNotice,
+    deleteNotice,
+  } = useHousehold();
   const [roleTarget, setRoleTarget] = useState<Member | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [renameVisible, setRenameVisible] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
+  const [noticeSheetOpen, setNoticeSheetOpen] = useState(false);
+  const [editingNotice, setEditingNotice] = useState<HouseNotice | null>(null);
 
-  const canManage = activeMember?.householdRole !== 'supervised';
-  const rotatingTasks = tasks.filter((t) => t.rotacion);
+  const isLeader = activeMember?.householdRole === 'leader';
+
+  const openRename = () => {
+    setNameDraft(householdName);
+    setRenameVisible(true);
+  };
+
+  const handleRename = () => {
+    renameHousehold(nameDraft);
+    setRenameVisible(false);
+    setToast('Nombre del hogar actualizado');
+  };
+
+  const openNewNotice = () => {
+    setEditingNotice(null);
+    setNoticeSheetOpen(true);
+  };
+
+  const openEditNotice = (notice: HouseNotice) => {
+    setEditingNotice(notice);
+    setNoticeSheetOpen(true);
+  };
+
+  const closeNoticeSheet = () => {
+    setNoticeSheetOpen(false);
+    setEditingNotice(null);
+  };
+
+  const handleNoticeSubmit = (input: NoticeInput) => {
+    if (editingNotice) {
+      updateNotice(editingNotice.id, input);
+      setToast('Aviso actualizado');
+    } else {
+      addNotice(input);
+      setToast('Aviso añadido al tablón');
+    }
+    closeNoticeSheet();
+  };
 
   return (
-    <Screen
-      overlay={
-        <NoticeToast message={toast} onDone={() => setToast(null)} />
-      }
-    >
-      <ScreenHeader
-        title="Ajustes"
-        subtitle="Tema, hogar y miembros"
-      />
+    <Screen overlay={<NoticeToast message={toast} onDone={() => setToast(null)} />}>
+      <ScreenHeader title="Ajustes" subtitle="Apariencia, hogar y roles" />
 
       <SectionCard
-        title="Miembros del hogar"
-        subtitle={`${members.length} persona${members.length === 1 ? '' : 's'} en la casa`}
+        title="Mi Apariencia"
+        subtitle="Personal · solo cambia en tu dispositivo"
       >
-        {members.map((member) => (
-          <Pressable
-            key={member.id}
-            disabled={!canManage}
-            onPress={() => setRoleTarget(member)}
-            style={({ pressed }) => [
-              styles.memberRow,
-              canManage && pressed && { opacity: 0.7 },
-            ]}
-          >
-            <MemberAvatar member={member} size={36} />
-            <View style={styles.memberInfo}>
-              <Text style={[styles.memberName, { color: theme.colors.textPrimary }]}>
-                {member.name}
-              </Text>
-              <Text style={[styles.memberRole, { color: theme.colors.textSecondary }]}>
-                {ROLE_LABELS[member.householdRole]}
-              </Text>
-            </View>
-            {member.id === activeMember?.id ? (
-              <View
-                style={[
-                  styles.activePill,
-                  { backgroundColor: theme.colors.accentSoft },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.activePillText,
-                    { color: theme.colors.accentStrong },
-                  ]}
-                >
-                  Eres tú
-                </Text>
-              </View>
-            ) : null}
-            {canManage ? (
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.colors.tabInactive}
-              />
-            ) : null}
-          </Pressable>
-        ))}
-
-        {canManage ? (
-          <Pressable
-            onPress={() =>
-              setToast('🔗 Enlace de invitación copiado al portapapeles')
-            }
-            style={({ pressed }) => [
-              styles.invitePill,
-              {
-                backgroundColor: theme.colors.surfaceVariant,
-                borderRadius: theme.radius.md,
-              },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Ionicons
-              name="link"
-              size={18}
-              color={theme.colors.primaryStrong}
-            />
-            <Text style={[styles.inviteText, { color: theme.colors.primaryStrong }]}>
-              Invitar al hogar
-            </Text>
-          </Pressable>
-        ) : (
-          <Text style={[styles.readOnlyHint, { color: theme.colors.textSecondary }]}>
-            Los invitados se suman desde alguien con permisos de gestión.
-          </Text>
-        )}
-      </SectionCard>
-
-      <SectionCard title="Paleta de tema">
         <Text style={[styles.sectionHint, { color: theme.colors.textSecondary }]}>
-          Los colores provienen de los tokens de diseño. Toca para activar.
+          Tu paleta no afecta al resto del hogar. Toca para activar.
         </Text>
         <View style={styles.paletteRow}>
           {PALETTES.map((palette) => {
@@ -177,120 +150,339 @@ export function AjustesScreen() {
       </SectionCard>
 
       <SectionCard
-        title="Usuario activo"
-        subtitle="Herramienta de prueba · simula quién usa la app ahora"
+        title="📌 Tablón del hogar"
+        subtitle="Notas y recordatorios de convivencia"
+        style={{
+          backgroundColor: theme.colors.highlightSoft,
+          borderRadius: 20,
+          shadowOpacity: 0,
+          elevation: 0,
+        }}
       >
-        <Text style={[styles.sectionHint, { color: theme.colors.textSecondary }]}>
-          Solo la persona asignada puede tachar su tarea; las de la bolsa común
-          valen para cualquiera.
-        </Text>
-        <View style={[styles.chipsRow, { marginTop: 12 }]}>
-          {members.map((member) => {
-            const isActive = member.id === activeMember?.id;
-            return (
-              <Pressable
-                key={member.id}
-                onPress={() => setActiveMember(member.id)}
-                style={[
-                  styles.userChip,
-                  {
-                    backgroundColor: isActive
-                      ? theme.colors.primarySoft
-                      : theme.colors.surfaceVariant,
-                    borderWidth: 1.5,
-                    borderColor: isActive
-                      ? theme.colors.primaryStrong
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <MemberAvatar member={member} size={24} />
-                <Text
-                  style={[
-                    styles.userChipText,
-                    {
-                      color: isActive
-                        ? theme.colors.primaryStrong
-                        : theme.colors.textSecondary,
-                      fontWeight: isActive ? '800' : '600',
-                    },
-                  ]}
-                >
-                  {member.name}
-                </Text>
-                {isActive && (
-                  <Ionicons
-                    name="checkmark-circle"
-                    size={14}
-                    color={theme.colors.primaryStrong}
-                  />
-                )}
-              </Pressable>
-            );
-          })}
-        </View>
-      </SectionCard>
+        <Pressable
+          onPress={openNewNotice}
+          style={({ pressed }) => [
+            styles.noticeAddBtn,
+            {
+              backgroundColor: theme.colors.highlightStrong,
+              borderRadius: theme.radius.pill,
+            },
+            pressed && { opacity: 0.85 },
+          ]}
+        >
+          <Ionicons name="add" size={18} color="#FFFFFF" />
+          <Text style={styles.noticeAddBtnText}>Nueva nota</Text>
+        </Pressable>
 
-      <SectionCard
-        title="Tareas rotativas (test)"
-        subtitle="Simula el cierre de semana: avanza el turno circular"
-      >
-        {rotatingTasks.length === 0 ? (
-          <Text style={[styles.sectionHint, { color: theme.colors.textSecondary }]}>
-            Aún no hay tareas rotativas. Crea una desde Tareas activando
-            "Tarea rotativa (por turnos)".
+        {notices.length === 0 ? (
+          <Text
+            style={[
+              styles.readOnlyHint,
+              { color: theme.colors.textSecondary },
+            ]}
+          >
+            Sin notas todavía. Añade citas de técnicos, paquetería esperada,
+            franjas de silencio o notas rápidas para el hogar.
           </Text>
         ) : (
-          rotatingTasks.map((task) => {
-            const owner = getMemberById(task.assigneeId)?.name ?? '?';
+          notices.map((notice) => {
+            const author = getMemberById(notice.createdBy);
             return (
-              <View key={task.id} style={styles.turnRow}>
-                <View style={styles.turnInfo}>
+              <View key={notice.id} style={styles.noticeRow}>
+                {author ? (
+                  <MemberAvatar member={author} size={32} />
+                ) : (
+                  <View
+                    style={[
+                      styles.noticeAuthorFallback,
+                      { backgroundColor: theme.colors.highlightStrong },
+                    ]}
+                  >
+                    <Ionicons name="home" size={14} color="#FFFFFF" />
+                  </View>
+                )}
+                <View style={styles.noticeBody}>
                   <Text
                     style={[
-                      styles.turnTaskTitle,
+                      styles.noticeText,
                       { color: theme.colors.textPrimary },
                     ]}
                   >
-                    {task.title}
+                    {notice.text}
                   </Text>
                   <Text
                     style={[
-                      styles.turnOwner,
+                      styles.noticeMeta,
                       { color: theme.colors.textSecondary },
                     ]}
+                    numberOfLines={1}
                   >
-                    Turno: {owner}
+                    {author?.name ?? 'Varios'} · {noticeExpiryLabel(notice)}
                   </Text>
                 </View>
-                <Ionicons
-                  name="repeat"
-                  size={16}
-                  color={theme.colors.primaryStrong}
-                />
+                <View style={styles.noticeActions}>
+                  <Pressable
+                    onPress={() => openEditNotice(notice)}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.noticeAction,
+                      pressed && { opacity: 0.5 },
+                    ]}
+                    accessibilityLabel="Editar nota"
+                  >
+                    <Ionicons
+                      name="create-outline"
+                      size={16}
+                      color={theme.colors.textSecondary}
+                    />
+                  </Pressable>
+                  <Pressable
+                    onPress={() => deleteNotice(notice.id)}
+                    hitSlop={8}
+                    style={({ pressed }) => [
+                      styles.noticeAction,
+                      pressed && { opacity: 0.5 },
+                    ]}
+                    accessibilityLabel="Eliminar nota"
+                  >
+                    <Ionicons
+                      name="trash-outline"
+                      size={16}
+                      color={theme.colors.textSecondary}
+                    />
+                  </Pressable>
+                </View>
               </View>
             );
           })
         )}
-        {rotatingTasks.length > 0 ? (
-          <View style={styles.turnActions}>
-            <PillButton
-              label="Avanzar turnos"
-              variant="strong"
-              onPress={() => {
-                advanceAllTurns();
-                setToast('Turnos avanzados · prueba de cierre de semana');
-              }}
-            />
-          </View>
-        ) : null}
       </SectionCard>
+
+      <SectionCard
+        title="Miembros y Roles del Hogar"
+        subtitle={`${householdName} · ${members.length} persona${
+          members.length === 1 ? '' : 's'
+        }`}
+      >
+        {isLeader ? (
+          <Pressable
+            onPress={openRename}
+            style={({ pressed }) => [
+              styles.houseRow,
+              {
+                backgroundColor: theme.colors.surfaceVariant,
+                borderRadius: theme.radius.md,
+              },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Ionicons
+              name="home-outline"
+              size={18}
+              color={theme.colors.primaryStrong}
+            />
+            <Text
+              style={[styles.houseName, { color: theme.colors.textPrimary }]}
+              numberOfLines={1}
+            >
+              {householdName}
+            </Text>
+            <Ionicons
+              name="create-outline"
+              size={16}
+              color={theme.colors.textSecondary}
+            />
+          </Pressable>
+        ) : null}
+
+        {members.map((member) => {
+          const rowContent = (
+            <>
+              <MemberAvatar member={member} size={36} />
+              <View style={styles.memberInfo}>
+                <Text
+                  style={[styles.memberName, { color: theme.colors.textPrimary }]}
+                >
+                  {member.name}
+                </Text>
+                <Text
+                  style={[styles.memberRole, { color: theme.colors.textSecondary }]}
+                >
+                  {ROLE_LABELS[member.householdRole]}
+                </Text>
+              </View>
+              {member.id === activeMember?.id ? (
+                <View
+                  style={[
+                    styles.activePill,
+                    { backgroundColor: theme.colors.accentSoft },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.activePillText,
+                      { color: theme.colors.accentStrong },
+                    ]}
+                  >
+                    Eres tú
+                  </Text>
+                </View>
+              ) : null}
+              {isLeader ? (
+                <Ionicons
+                  name="chevron-forward"
+                  size={18}
+                  color={theme.colors.tabInactive}
+                />
+              ) : null}
+            </>
+          );
+
+          return isLeader ? (
+            <Pressable
+              key={member.id}
+              onPress={() => setRoleTarget(member)}
+              style={({ pressed }) => [
+                styles.memberRow,
+                pressed && { opacity: 0.7 },
+              ]}
+            >
+              {rowContent}
+            </Pressable>
+          ) : (
+            <View key={member.id} style={styles.memberRow}>
+              {rowContent}
+            </View>
+          );
+        })}
+
+        {isLeader ? (
+          <Pressable
+            onPress={() =>
+              setToast('🔗 Enlace de invitación copiado al portapapeles')
+            }
+            style={({ pressed }) => [
+              styles.invitePill,
+              {
+                backgroundColor: theme.colors.surfaceVariant,
+                borderRadius: theme.radius.md,
+              },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Ionicons
+              name="link"
+              size={18}
+              color={theme.colors.primaryStrong}
+            />
+            <Text style={[styles.inviteText, { color: theme.colors.primaryStrong }]}>
+              Invitar al hogar
+            </Text>
+          </Pressable>
+        ) : (
+          <Text style={[styles.readOnlyHint, { color: theme.colors.textSecondary }]}>
+            Solo el Líder del hogar puede cambiar roles, expulsar miembros o
+            editar los datos de la casa.
+          </Text>
+        )}
+      </SectionCard>
+
+      {__DEV__ ? (
+        <SectionCard
+          title="Usuario activo"
+          subtitle="Herramienta de prueba · simula quién usa la app ahora"
+        >
+          <Text style={[styles.sectionHint, { color: theme.colors.textSecondary }]}>
+            Solo la persona asignada puede tachar su tarea; las de la bolsa
+            común valen para cualquiera.
+          </Text>
+          <View style={[styles.chipsRow, { marginTop: 12 }]}>
+            {members.map((member) => {
+              const isActive = member.id === activeMember?.id;
+              return (
+                <Pressable
+                  key={member.id}
+                  onPress={() => setActiveMember(member.id)}
+                  style={[
+                    styles.userChip,
+                    {
+                      backgroundColor: isActive
+                        ? theme.colors.primarySoft
+                        : theme.colors.surfaceVariant,
+                      borderWidth: 1.5,
+                      borderColor: isActive
+                        ? theme.colors.primaryStrong
+                        : 'transparent',
+                    },
+                  ]}
+                >
+                  <MemberAvatar member={member} size={24} />
+                  <Text
+                    style={[
+                      styles.userChipText,
+                      {
+                        color: isActive
+                          ? theme.colors.primaryStrong
+                          : theme.colors.textSecondary,
+                        fontWeight: isActive ? '800' : '600',
+                      },
+                    ]}
+                  >
+                    {member.name}
+                  </Text>
+                  {isActive && (
+                    <Ionicons
+                      name="checkmark-circle"
+                      size={14}
+                      color={theme.colors.primaryStrong}
+                    />
+                  )}
+                </Pressable>
+              );
+            })}
+          </View>
+        </SectionCard>
+      ) : null}
 
       <MemberRoleSheet
         visible={roleTarget !== null}
         member={roleTarget}
         onClose={() => setRoleTarget(null)}
       />
+
+      <NoticeSheet
+        visible={noticeSheetOpen}
+        initial={editingNotice}
+        onClose={closeNoticeSheet}
+        onSubmit={handleNoticeSubmit}
+      />
+
+      <BottomSheet
+        visible={renameVisible}
+        onClose={() => setRenameVisible(false)}
+        title="Renombrar el hogar"
+        subtitle="El nombre que verán todos los convivientes."
+      >
+        <TextInput
+          value={nameDraft}
+          onChangeText={setNameDraft}
+          placeholder="Ej. Casa de los Martínez"
+          placeholderTextColor={theme.colors.tabInactive}
+          returnKeyType="done"
+          onSubmitEditing={handleRename}
+          style={[
+            styles.addInput,
+            {
+              backgroundColor: theme.colors.surfaceVariant,
+              color: theme.colors.textPrimary,
+              borderRadius: theme.radius.pill,
+              paddingHorizontal: 16,
+              marginBottom: 18,
+            },
+          ]}
+        />
+        <PillButton label="Guardar nombre" variant="strong" onPress={handleRename} />
+      </BottomSheet>
     </Screen>
   );
 }
@@ -311,6 +503,19 @@ const styles = StyleSheet.create({
   },
   userChipText: {
     fontSize: 13,
+  },
+  houseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  houseName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
   },
   memberRow: {
     flexDirection: 'row',
@@ -357,31 +562,68 @@ const styles = StyleSheet.create({
     marginTop: 12,
     lineHeight: 17,
   },
+  noticeAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    alignSelf: 'flex-start',
+    paddingVertical: 10,
+    paddingHorizontal: 18,
+    marginBottom: 6,
+  },
+  noticeAddBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  noticeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 10,
+  },
+  noticeAuthorFallback: {
+    width: 32,
+    height: 32,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noticeBody: {
+    flex: 1,
+    gap: 3,
+  },
+  noticeText: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 19,
+  },
+  noticeMeta: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  noticeActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+  noticeAction: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionHint: {
     fontSize: 13,
     marginTop: 4,
   },
-  turnRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 9,
-  },
-  turnInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  turnTaskTitle: {
+  addInput: {
+    height: 44,
     fontSize: 14,
-    fontWeight: '700',
-  },
-  turnOwner: {
-    fontSize: 12,
     fontWeight: '600',
-  },
-  turnActions: {
-    marginTop: 12,
-    alignItems: 'flex-end',
   },
   paletteRow: {
     flexDirection: 'row',

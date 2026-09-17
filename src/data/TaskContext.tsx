@@ -11,12 +11,13 @@ import { buildSeedTasks } from './seed';
 import {
   DayOfWeek,
   RotatingTurn,
+  ScheduledSchedule,
   Task,
   TaskCategory,
   TaskSchedule,
   TasksStorage,
 } from './types';
-import { getCurrentWeekKey, toDateKey, fromDateKey, startOfWeek, addDays } from './schedule';
+import { getCurrentWeekKey, toDateKey, fromDateKey, startOfWeek, addDays, dateInWeekMonday, scheduledOccursOn, nextOccurrenceOnOrAfter } from './schedule';
 import { useHousehold } from './HouseholdContext';
 import { useClock } from './ClockContext';
 
@@ -29,19 +30,19 @@ interface TaskActionBase {
   schedule?: TaskSchedule;
   rotacion?: RotatingTurn;
   category?: TaskCategory;
+  urgent?: boolean;
 }
 
 interface TasksContextValue {
   tasks: Task[];
   ready: boolean;
-  addTask: (input: TaskActionBase) => void;
+  addTask: (input: TaskActionBase) => Task | undefined;
   toggleAssigned: (taskId: string) => void;
   claimFreeTask: (taskId: string) => void;
   reopen: (taskId: string) => void;
   canCheckTask: (task: Task) => boolean;
   advanceTurn: (taskId: string) => void;
   advanceAllTurns: () => void;
-  simulateWeek: () => void;
   pendingAssigned: Task[];
   doneAssigned: Task[];
   pendingFree: Task[];
@@ -75,7 +76,62 @@ function sortTasks(tasks: Task[]): Task[] {
   });
 }
 
+function advanceRangeCycle(task: Task): Task {
+  const schedule = task.schedule;
+  if (
+    !schedule ||
+    schedule.type !== 'scheduled' ||
+    !schedule.startDate ||
+    !schedule.endDate
+  ) {
+    return task;
+  }
+  const interval =
+    schedule.repeatIntervalDays && schedule.repeatIntervalDays > 0
+      ? schedule.repeatIntervalDays
+      : 7;
+  const spanMs =
+    fromDateKey(schedule.endDate).getTime() -
+    fromDateKey(schedule.startDate).getTime();
+  const nextStart = addDays(fromDateKey(schedule.startDate), interval);
+  const next: Task = {
+    ...task,
+    schedule: {
+      ...schedule,
+      startDate: toDateKey(nextStart),
+      endDate: toDateKey(new Date(nextStart.getTime() + spanMs)),
+    },
+    completed: false,
+    completedBy: null,
+    completedAt: null,
+  };
+  const rot = next.rotacion;
+  if (rot && rot.miembrosTurno.length > 0) {
+    const members = rot.miembrosTurno;
+    const nextIndex =
+      members.length > 1
+        ? (rot.indiceTurnoActual + 1) % members.length
+        : rot.indiceTurnoActual;
+    next.assigneeId = members[nextIndex];
+    next.rotacion = {
+      ...rot,
+      indiceTurnoActual: nextIndex,
+      fechaInicioCiclo: nextStart.getTime(),
+      proximaRotacion: nextStart.getTime() + interval * DAY_MS,
+    };
+  }
+  return next;
+}
+
 function advanceTurnTask(task: Task): Task {
+  const schedule = task.schedule;
+  if (
+    schedule?.type === 'scheduled' &&
+    schedule.startDate &&
+    schedule.endDate
+  ) {
+    return advanceRangeCycle(task);
+  }
   const rotacion = task.rotacion;
   if (!rotacion || rotacion.miembrosTurno.length === 0) return task;
   const members = rotacion.miembrosTurno;
@@ -99,78 +155,100 @@ function advanceTurnTask(task: Task): Task {
   };
 }
 
-function applyCycleMaintenance(storage: TasksStorage, now: number): TasksStorage {
-  let changed = false;
-  const tasks = storage.tasks.map((task) => {
-    if (!task.rotacion && !task.schedule) return task;
-
-    let current = task;
-
-    if (current.rotacion && current.rotacion.miembrosTurno.length > 0) {
-      let guard = 0;
-      while (guard < 52) {
-        const rot = current.rotacion;
-        if (!rot || now < rot.proximaRotacion) break;
-        current = advanceTurnTask(current);
-        changed = true;
-        guard += 1;
-      }
-    }
-
-    const sched = current.schedule;
-    if (
-      sched?.type === 'scheduled' &&
-      sched.repeatWeekly &&
-      current.completed &&
-      current.completedAt &&
-      now - current.completedAt >= 7 * DAY_MS
-    ) {
-      current = {
-        ...current,
-        completed: false,
-        completedBy: null,
-        completedAt: null,
-      };
-      changed = true;
-    }
-
-    return current;
-  });
-  return changed ? { ...storage, tasks } : storage;
+function shouldReopenRoutine(
+  schedule: ScheduledSchedule,
+  completedAt: number,
+  now: number,
+): boolean {
+  if (schedule.startDate && schedule.repeatIntervalDays && schedule.repeatIntervalDays > 0) {
+    const completedDay = fromDateKey(toDateKey(new Date(completedAt)));
+    const next = nextOccurrenceOnOrAfter(schedule, completedDay, false);
+    if (!next) return false;
+    const today = fromDateKey(toDateKey(new Date(now)));
+    return today.getTime() >= next.getTime();
+  }
+  return (
+    schedule.repeatWeekly && now - completedAt >= 7 * DAY_MS
+  );
 }
 
-function applyWeekAdvance(storage: TasksStorage, now: number): TasksStorage {
+function applyCycleMaintenance(storage: TasksStorage, now: number): TasksStorage {
   let changed = false;
-  const tasks = storage.tasks.map((task) => {
-    let current = task;
-
-    if (
-      current.schedule?.type === 'scheduled' &&
-      current.schedule.repeatWeekly &&
-      current.completed
-    ) {
-      current = {
-        ...current,
-        completed: false,
-        completedBy: null,
-        completedAt: null,
-      };
-      changed = true;
-    }
-
-    if (current.rotacion && current.rotacion.miembrosTurno.length > 0) {
-      let guard = 0;
-      while (guard < 52) {
-        const rot = current.rotacion;
-        if (!rot || now < rot.proximaRotacion) break;
-        current = advanceTurnTask(current);
-        changed = true;
-        guard += 1;
+  const currentWeek = getCurrentWeekKey();
+  const weekStart = toDateKey(startOfWeek(new Date(now)));
+  const tasks = storage.tasks
+    .filter((task) => {
+      if (!task.completed) return true;
+      const s = task.schedule;
+      if (!s) return true;
+      if (s.type === 'once') {
+        const end = s.endDate ?? s.dueDate;
+        return end >= weekStart;
       }
-    }
+      if (s.type === 'scheduled' && s.repeatWeekly === false && s.weekKey) {
+        return s.weekKey === currentWeek;
+      }
+      return true;
+    })
+    .map((task) => {
+      if (!task.rotacion && !task.schedule) return task;
 
-    return current;
-  });
+      let current = task;
+
+      const rangeSchedule =
+        current.schedule?.type === 'scheduled' &&
+        !!current.schedule.startDate &&
+        !!current.schedule.endDate;
+
+      if (rangeSchedule) {
+        let guard = 0;
+        while (guard < 52) {
+          const s = current.schedule;
+          if (s?.type !== 'scheduled' || !s.startDate || !s.endDate) break;
+          const interval =
+            s.repeatIntervalDays && s.repeatIntervalDays > 0
+              ? s.repeatIntervalDays
+              : 7;
+          const nextStart = addDays(fromDateKey(s.startDate), interval);
+          if (now < nextStart.getTime()) break;
+          current = advanceRangeCycle(current);
+          changed = true;
+          guard += 1;
+        }
+        return current;
+      }
+
+      if (current.rotacion && current.rotacion.miembrosTurno.length > 0) {
+        let guard = 0;
+        while (guard < 52) {
+          const rot = current.rotacion;
+          if (!rot || now < rot.proximaRotacion) break;
+          current = advanceTurnTask(current);
+          changed = true;
+          guard += 1;
+        }
+      }
+
+      const sched = current.schedule;
+      if (
+        sched?.type === 'scheduled' &&
+        !sched.endDate &&
+        current.completed &&
+        current.completedAt &&
+        shouldReopenRoutine(sched, current.completedAt, now)
+      ) {
+        current = {
+          ...current,
+          completed: false,
+          completedBy: null,
+          completedAt: null,
+        };
+        changed = true;
+      }
+
+      return current;
+    });
+  if (tasks.length !== storage.tasks.length) changed = true;
   return changed ? { ...storage, tasks } : storage;
 }
 
@@ -192,7 +270,22 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
           if (raw) {
             const parsed = JSON.parse(raw) as TasksStorage;
             if (Array.isArray(parsed.tasks)) {
-              setState(applyCycleMaintenance(parsed));
+              const normalized: TasksStorage = {
+                ...parsed,
+                tasks: parsed.tasks.map((task) => {
+                  if (task.urgent) return task;
+                  const prefix = 'Urgente: Comprar ';
+                  if (task.title.startsWith(prefix)) {
+                    return {
+                      ...task,
+                      title: task.title.slice(prefix.length),
+                      urgent: true,
+                    };
+                  }
+                  return task;
+                }),
+              };
+              setState(applyCycleMaintenance(normalized, Date.now()));
             } else {
               setState(buildSeedTasks());
             }
@@ -225,10 +318,10 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo<TasksContextValue>(() => {
     const tasks = state?.tasks ?? [];
 
-    const addTask = (input: TaskActionBase) => {
-      if (activeMember?.householdRole === 'supervised') return;
+    const addTask = (input: TaskActionBase): Task | undefined => {
+      if (activeMember?.householdRole === 'supervised') return undefined;
       const title = input.title.trim();
-      if (!title) return;
+      if (!title) return undefined;
       const rotacion = input.rotacion;
       const task: Task = {
         id: makeId('task'),
@@ -243,10 +336,12 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
         schedule: input.schedule,
         rotacion,
         category: input.category ?? 'otros',
+        urgent: input.urgent === true,
       };
       setState((prev) =>
         prev ? { ...prev, tasks: [...prev.tasks, task] } : prev,
       );
+      return task;
     };
 
     const patchTask = (taskId: string, patch: (task: Task) => Task) => {
@@ -389,6 +484,10 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
         const todayKey = toDateKey(new Date());
         return s.dueDate >= todayKey;
       }
+      if (s?.type === 'scheduled' && s.startDate) {
+        const todayKey = toDateKey(new Date());
+        return s.startDate <= todayKey;
+      }
       return true;
     };
 
@@ -404,7 +503,9 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
       if (t.schedule?.type === 'once') {
         const monday = startOfWeek();
         const sunday = addDays(monday, 6);
-        return t.schedule.dueDate >= toDateKey(monday) && t.schedule.dueDate <= toDateKey(sunday);
+        const start = t.schedule.dueDate;
+        const end = t.schedule.endDate ?? start;
+        return start <= toDateKey(sunday) && end >= toDateKey(monday);
       }
       return false;
     };
@@ -419,14 +520,22 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
           if (!s) return day === todayDay;
           if (s.type === 'flexible') return false;
           if (s.type === 'once') {
-            const dueDate = fromDateKey(s.dueDate);
-            const dueDay = dueDate.getDay() as DayOfWeek;
-            if (dueDay !== day) return false;
-            return getCurrentWeekKey(dueDate) === weekKey;
+            const weekDate = dateInWeekMonday(startOfWeek(), day);
+            const key = toDateKey(weekDate);
+            if (key < s.dueDate) return false;
+            if (s.endDate && key > s.endDate) return false;
+            const end = s.endDate ?? s.dueDate;
+            const monday = startOfWeek();
+            const sunday = addDays(monday, 6);
+            return (
+              s.dueDate <= toDateKey(sunday) &&
+              end >= toDateKey(monday)
+            );
           }
-          if (!s.days.includes(day)) return false;
-          if (s.repeatWeekly) return true;
-          return s.weekKey === weekKey;
+          if (s.type === 'scheduled') {
+            const weekDate = dateInWeekMonday(startOfWeek(), day);
+            return scheduledOccursOn(s, weekDate);
+          }
         }),
       );
 

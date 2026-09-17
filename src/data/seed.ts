@@ -27,6 +27,17 @@ export function buildSeedHouse(): HouseData {
       },
     ],
     activeMemberId: 'member-laura',
+    householdName: 'Casa de los Martínez',
+    notices: [
+      {
+        id: 'notice-silencio',
+        text: 'Silencio a partir de las 23:00 · franja de estudio',
+        createdBy: 'member-laura',
+        createdAt: now,
+        duration: 'never',
+        expiresAt: null,
+      },
+    ],
   };
 }
 

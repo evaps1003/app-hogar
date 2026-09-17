@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Screen } from '../components/Screen';
@@ -20,16 +20,10 @@ import {
   CUSTOM_CATEGORY_ICON,
 } from '../data/categories';
 import { useTheme } from '../theme';
-import { DayOfWeek, MemberColor, Task, TaskCategory } from '../data/types';
-import {
-  getCurrentWeekKey,
-  DAY_LABELS,
-  DAY_SHORT_LABELS,
-  WEEKDAY_ORDER,
-} from '../data/schedule';
+import { MemberColor, Task, TaskCategory } from '../data/types';
 import { NewCategoryModal } from '../components/NewCategoryModal';
 
-type ViewMode = 'categorias' | 'miembros' | 'dias';
+type ViewMode = 'categorias' | 'miembros';
 
 const CATEGORY_STYLE: Record<
   string,
@@ -49,23 +43,6 @@ const MEMBER_STRONG: Record<
   accent: 'accentStrong',
 };
 
-const MONTH_NAMES = [
-  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-];
-
-function dateKeyOf(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
-    date.getDate(),
-  )}`;
-}
-
-function taskTimeOf(task: Task): string {
-  const s = task.schedule;
-  if (!s || s.type === 'flexible') return '';
-  return s.type === 'once' ? s.time ?? '' : s.time ?? s.timeStart ?? '';
-}
 
 export function TareasScreen() {
   const {
@@ -79,7 +56,7 @@ export function TareasScreen() {
     canCheckTask,
     swapRequests,
     assumeTask,
-    assignTask,
+    deleteTask,
   } = useTasks();
   const {
     getMemberById,
@@ -95,16 +72,12 @@ export function TareasScreen() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [categoryModalVisible, setCategoryModalVisible] = useState(false);
   const [swapExpanded, setSwapExpanded] = useState(false);
-  const [assigningTaskId, setAssigningTaskId] = useState<string | null>(null);
   const [collapsedMembers, setCollapsedMembers] = useState<Set<string>>(
     () => new Set(members.map((m) => m.id)),
   );
   const [collapsedCategories, setCollapsedCategories] = useState<
     Set<TaskCategory>
   >(() => new Set(['limpieza', 'cocina', 'otros']));
-  const [selectedDateKeys, setSelectedDateKeys] = useState<Set<string>>(
-    () => new Set([dateKeyOf(new Date())]),
-  );
 
   useEffect(() => {
     setCollapsedMembers((prev) => {
@@ -159,23 +132,12 @@ export function TareasScreen() {
     });
   };
 
-  const toggleAssign = (taskId: string) => {
-    setAssigningTaskId((prev) => (prev === taskId ? null : taskId));
-  };
-
-  const handleAssign = (taskId: string, assigneeId: string | null) => {
-    assignTask(taskId, assigneeId);
-    setAssigningTaskId(null);
-  };
-
   const openNewForm = () => {
     setEditingTask(null);
-    setAssigningTaskId(null);
     setFormVisible(true);
   };
 
   const openEditForm = (task: Task) => {
-    setAssigningTaskId(null);
     setEditingTask(task);
   };
 
@@ -238,130 +200,6 @@ export function TareasScreen() {
     return [...known];
   }, [categories, pendingByCategory, doneByCategory]);
 
-  const matchesDate = useCallback(
-    (task: Task, date: Date) => {
-      const dow = date.getDay() as DayOfWeek;
-      const dateKey = getCurrentWeekKey(date);
-      const todayStr = new Date().toDateString();
-      const s = task.schedule;
-      if (!s) return date.toDateString() === todayStr;
-      if (s.type === 'flexible') return s.weekKey === dateKey;
-      if (s.type === 'once') {
-        const dueDate = new Date(s.dueDate + 'T00:00:00');
-        return dueDate.toDateString() === date.toDateString();
-      }
-      if (!s.days.includes(dow)) return false;
-      return s.repeatWeekly || s.weekKey === dateKey;
-    },
-    [],
-  );
-
-  const tasksOnDate = useCallback(
-    (date: Date) =>
-      [...pendingFree, ...pendingAssigned]
-        .filter((t) => !t.completed && matchesDate(t, date))
-        .sort((a, b) => {
-          const ta = taskTimeOf(a);
-          const tb = taskTimeOf(b);
-          if (ta !== tb) return ta.localeCompare(tb);
-          return a.title.localeCompare(b.title);
-        }),
-    [pendingFree, pendingAssigned, matchesDate],
-  );
-
-  const monthView = useMemo(() => {
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const firstDow = new Date(year, month, 1).getDay() as DayOfWeek;
-    const startOffset = (firstDow + 6) % 7;
-    const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
-
-    const cells: (number | null)[] = [];
-    for (let i = 0; i < startOffset; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-    while (cells.length < totalCells) cells.push(null);
-
-    const dayTasksMap = new Map<number, Task[]>();
-    for (let d = 1; d <= daysInMonth; d++) {
-      const date = new Date(year, month, d);
-      const matched = tasksOnDate(date);
-      if (matched.length > 0) dayTasksMap.set(d, matched);
-    }
-
-    const monthDates = Array.from(
-      { length: daysInMonth },
-      (_, i) => new Date(year, month, i + 1),
-    );
-
-    return {
-      cells,
-      dayTasksMap,
-      monthDates,
-      todayDate: now.getDate(),
-      todayMonth: now.getMonth(),
-    };
-  }, [tasksOnDate]);
-
-  const toggleDateKey = (dateKey: string) => {
-    setSelectedDateKeys((prev) => {
-      const next = new Set(prev);
-      if (next.has(dateKey)) {
-        if (next.size === 1) return prev;
-        next.delete(dateKey);
-      } else {
-        next.add(dateKey);
-      }
-      return next;
-    });
-  };
-
-  const selectedDateList = useMemo(
-    () =>
-      monthView.monthDates
-        .filter((d) => selectedDateKeys.has(dateKeyOf(d)))
-        .sort((a, b) => a.getTime() - b.getTime()),
-    [monthView.monthDates, selectedDateKeys],
-  );
-
-  const selectedWeekdays = useMemo(() => {
-    const dows = new Set<DayOfWeek>();
-    selectedDateKeys.forEach((key) => {
-      const [y, m, d] = key.split('-').map(Number);
-      const date = new Date(y, m - 1, d);
-      dows.add(date.getDay() as DayOfWeek);
-    });
-    return WEEKDAY_ORDER.filter((dow) => dows.has(dow));
-  }, [selectedDateKeys]);
-
-  const selectedDayBlocks = useMemo(
-    () =>
-      selectedDateList.map((date) => ({
-        date,
-        tasks: tasksOnDate(date),
-        isToday:
-          date.toDateString() === new Date().toDateString(),
-      })),
-    [selectedDateList, tasksOnDate],
-  );
-
-  const formatDayHeader = (date: Date) => {
-    const dow = date.getDay() as DayOfWeek;
-    const isToday = date.toDateString() === new Date().toDateString();
-    return `${DAY_SHORT_LABELS[dow].toUpperCase()} ${date.getDate()} de ${MONTH_NAMES[date.getMonth()]}${isToday ? ' · Hoy' : ''}`;
-  };
-
-  const renderQuickAssignProps = (task: Task) => ({
-    onAvatarPress: task.completed
-      ? undefined
-      : () => toggleAssign(task.id),
-    assignOpen: assigningTaskId === task.id,
-    members,
-    onAssign: (assigneeId: string | null) =>
-      handleAssign(task.id, assigneeId),
-    onPressEdit: () => openEditForm(task),
-  });
 
   return (
     <>
@@ -381,7 +219,6 @@ export function TareasScreen() {
           {([
             { key: 'categorias' as const, label: 'Categorías', icon: 'layers-outline' as const },
             { key: 'miembros' as const, label: 'Miembros', icon: 'people-outline' as const },
-            { key: 'dias' as const, label: 'Por Días', icon: 'calendar-outline' as const },
           ]).map(({ key, label, icon }) => {
             const selected = viewMode === key;
             return (
@@ -452,10 +289,6 @@ export function TareasScreen() {
             {categoryList.map((cat) => {
               const catTasks = pendingByCategory.get(cat) ?? [];
               const catDone = doneByCategory.get(cat) ?? [];
-              const isBuiltin = (BUILTIN_CATEGORIES as string[]).includes(cat);
-              if (isBuiltin && catTasks.length === 0 && catDone.length === 0) {
-                return null;
-              }
               const style = CATEGORY_STYLE[cat] ?? {
                 iconColor: 'highlightStrong' as keyof typeof theme.colors,
                 bg: 'surfaceVariant' as const,
@@ -527,24 +360,12 @@ export function TareasScreen() {
                   </Pressable>
                   {!collapsedCategories.has(cat) ? (
                     <View style={styles.categoryBody}>
-                      {catTasks.map((task) => (
-                        <TaskRow
-                          key={task.id}
-                          task={task}
-                          assignee={getMemberById(task.assigneeId)}
-                          onPressCheck={() =>
-                            task.assigneeId
-                              ? toggleAssigned(task.id)
-                              : claimFreeTask(task.id)
-                          }
-                          locked={!canCheckTask(task)}
-                          {...renderQuickAssignProps(task)}
-                        />
-                      ))}
-                      {catDone.length > 0 ? (
+                      {catTasks.length === 0 &&
+                      catDone.length === 0 ? (
+                        <EmptyLine message="Sin tareas pendientes" />
+                      ) : (
                         <>
-                          <SectionDivider label="Completadas" />
-                          {catDone.map((task) => (
+                          {catTasks.map((task) => (
                             <TaskRow
                               key={task.id}
                               task={task}
@@ -552,14 +373,34 @@ export function TareasScreen() {
                               onPressCheck={() =>
                                 task.assigneeId
                                   ? toggleAssigned(task.id)
-                                  : reopen(task.id)
+                                  : claimFreeTask(task.id)
                               }
                               locked={!canCheckTask(task)}
-                              muted
+                              onPressEdit={() => openEditForm(task)}
                             />
                           ))}
+                          {catDone.length > 0 ? (
+                            <>
+                              <SectionDivider label="Completadas" />
+                              {catDone.map((task) => (
+                                <TaskRow
+                                  key={task.id}
+                                  task={task}
+                                  assignee={getMemberById(task.assigneeId)}
+                                  onPressCheck={() =>
+                                    task.assigneeId
+                                      ? toggleAssigned(task.id)
+                                      : reopen(task.id)
+                                  }
+                                  locked={!canCheckTask(task)}
+                                  muted
+                                  onDelete={() => deleteTask(task.id)}
+                                />
+                              ))}
+                            </>
+                          ) : null}
                         </>
-                      ) : null}
+                      )}
                     </View>
                   ) : null}
                 </View>
@@ -583,291 +424,6 @@ export function TareasScreen() {
                 Nueva categoría
               </Text>
             </Pressable>
-          </>
-        ) : viewMode === 'dias' ? (
-          <>
-            {(() => {
-              const { cells, dayTasksMap, todayDate, todayMonth } = monthView;
-              const now = new Date();
-              const isCurrentMonth = now.getMonth() === todayMonth;
-              const totalRows = cells.length / 7;
-              const colPct = 100 / 7;
-              const LANES = 6;
-
-              const withOpacity = (hex: string, alpha: number) => {
-                const h = hex.replace('#', '');
-                const full =
-                  h.length === 3
-                    ? h.split('').map((c) => c + c).join('')
-                    : h;
-                const int = parseInt(full, 16);
-                const r = (int >> 16) & 255;
-                const g = (int >> 8) & 255;
-                const b = int & 255;
-                return `rgba(${r},${g},${b},${alpha})`;
-              };
-
-              const CATEGORY_STRONG: Record<string, string> = {
-                limpieza: theme.colors.infoStrong,
-                cocina: theme.colors.warningStrong,
-                otros: theme.colors.primaryStrong,
-              };
-
-              const taskColor = (t: Task) => {
-                if (t.assigneeId) {
-                  const m = getMemberById(t.assigneeId);
-                  if (m)
-                    return theme.colors[
-                      MEMBER_STRONG[m.color] as keyof typeof theme.colors
-                    ];
-                }
-                const cat = t.category ?? 'otros';
-                const fixed: string | undefined = (
-                  CATEGORY_STRONG as Record<string, string>
-                )[cat];
-                if (fixed) return fixed;
-                const palette = [
-                  theme.colors.infoStrong,
-                  theme.colors.warningStrong,
-                  theme.colors.primaryStrong,
-                  theme.colors.accentStrong,
-                  theme.colors.highlightStrong,
-                  theme.colors.danger,
-                ];
-                let h = 0;
-                for (let i = 0; i < cat.length; i++)
-                  h = ((h * 31 + cat.charCodeAt(i)) >>> 0) % palette.length;
-                return palette[h];
-              };
-
-              return (
-                <View
-                  style={[
-                    styles.calContainer,
-                    {
-                      backgroundColor: theme.colors.surfaceVariant,
-                      borderRadius: theme.radius.lg,
-                    },
-                  ]}
-                >
-                  <View style={styles.calHeaderRow}>
-                    {WEEKDAY_ORDER.map((dow) => (
-                      <Text
-                        key={dow}
-                        style={[
-                          styles.calHeaderText,
-                          { color: theme.colors.textSecondary },
-                        ]}
-                      >
-                        {DAY_LABELS[dow]}
-                      </Text>
-                    ))}
-                  </View>
-
-                  {Array.from({ length: totalRows }, (_, row) => {
-                    const slice = cells.slice(row * 7, (row + 1) * 7);
-                    const tasksInRow = new Map<
-                      string,
-                      { task: Task; cols: number[] }
-                    >();
-                    slice.forEach((day, col) => {
-                      if (day == null) return;
-                      const tasks = dayTasksMap.get(day) ?? [];
-                      tasks.forEach((t) => {
-                        if (!tasksInRow.has(t.id))
-                          tasksInRow.set(t.id, { task: t, cols: [] });
-                        tasksInRow.get(t.id)!.cols.push(col);
-                      });
-                    });
-
-                    const laneUsed = Array.from({ length: LANES }, () => new Set<number>());
-                    const bars: {
-                      key: string;
-                      color: string;
-                      left: number;
-                      width: number;
-                      top: number;
-                    }[] = [];
-                    const overflowIds = new Set<string>();
-
-                    Array.from(tasksInRow.values()).forEach(({ task, cols }) => {
-                      const uniq = Array.from(new Set(cols)).sort((a, b) => a - b);
-                      const runs: number[][] = [];
-                      let run: number[] = uniq.length > 0 ? [uniq[0]] : [];
-                      for (let i = 1; i < uniq.length; i++) {
-                        if (uniq[i] === run[run.length - 1] + 1) {
-                          run.push(uniq[i]);
-                        } else {
-                          if (run.length) runs.push(run);
-                          run = [uniq[i]];
-                        }
-                      }
-                      if (run.length) runs.push(run);
-
-                      runs.forEach((r) => {
-                        const span = new Set(r);
-                        let lane = -1;
-                        for (let l = 0; l < LANES; l++) {
-                          let ok = true;
-                          for (const c of span) if (laneUsed[l].has(c)) { ok = false; break; }
-                          if (ok) { lane = l; break; }
-                        }
-                        if (lane === -1) { overflowIds.add(task.id); return; }
-                        span.forEach((c) => laneUsed[lane].add(c));
-                        bars.push({
-                          key: `${row}-${task.id}-${r.join('-')}`,
-                          color: withOpacity(taskColor(task), 0.6),
-                          left: r[0] * colPct,
-                          width: r.length * colPct,
-                          top: 9 + lane * 7,
-                        });
-                      });
-                    });
-
-                    return (
-                      <View key={row} style={styles.calRowWrap}>
-                        <View style={styles.calRow}>
-                          {slice.map((day, col) => {
-                            const date =
-                              day != null
-                                ? new Date(
-                                    monthView.monthDates[0].getFullYear(),
-                                    monthView.monthDates[0].getMonth(),
-                                    day,
-                                  )
-                                : null;
-                            const isToday =
-                              isCurrentMonth && day === todayDate;
-                            const selected =
-                              date != null &&
-                              selectedDateKeys.has(dateKeyOf(date));
-                            const dayTasks = day != null ? dayTasksMap.get(day) : undefined;
-                            const overflow = dayTasks
-                              ? dayTasks.filter((t) => overflowIds.has(t.id)).length
-                              : 0;
-
-                            return (
-                              <Pressable
-                                key={col}
-                                disabled={day == null}
-                                onPress={() =>
-                                  date != null &&
-                                  toggleDateKey(dateKeyOf(date))
-                                }
-                                style={[
-                                  styles.calCell,
-                                  selected && {
-                                    backgroundColor: theme.colors.primarySoft,
-                                    borderColor: theme.colors.primaryStrong,
-                                  },
-                                ]}
-                              >
-                                {day != null ? (
-                                  <Text
-                                    style={[
-                                      styles.calDayNum,
-                                      {
-                                        color: isToday
-                                          ? theme.colors.primaryStrong
-                                          : theme.colors.textPrimary,
-                                        fontWeight: isToday ? '800' : '600',
-                                      },
-                                    ]}
-                                  >
-                                    {day}
-                                  </Text>
-                                ) : null}
-                                {overflow > 0 ? (
-                                  <Text
-                                    style={[
-                                      styles.calDotMore,
-                                      { color: theme.colors.textSecondary },
-                                    ]}
-                                  >
-                                    +{overflow}
-                                  </Text>
-                                ) : null}
-                              </Pressable>
-                            );
-                          })}
-                        </View>
-                        {bars.length > 0 ? (
-                          <View
-                            style={styles.calBarsLayer}
-                            pointerEvents="none"
-                          >
-                            {bars.map((bar) => (
-                              <View
-                                key={bar.key}
-                                style={[
-                                  styles.calBar,
-                                  {
-                                    left: `${bar.left}%`,
-                                    width: `${bar.width}%`,
-                                    top: bar.top,
-                                    backgroundColor: bar.color,
-                                  },
-                                ]}
-                              />
-                            ))}
-                          </View>
-                        ) : null}
-                      </View>
-                    );
-                  })}
-                </View>
-              );
-            })()}
-
-            {selectedDayBlocks.flatMap(({ date, tasks, isToday }) =>
-              tasks.length === 0
-                ? [
-                    <View key={dateKeyOf(date)} style={styles.dayBlock}>
-                      <Text
-                        style={[
-                          styles.dayLabel,
-                          { color: theme.colors.primaryStrong },
-                        ]}
-                      >
-                        {formatDayHeader(date)}
-                      </Text>
-                      <EmptyLine message="Sin tareas este día" />
-                    </View>,
-                  ]
-                : tasks.map((task) => (
-                    <View
-                      key={`${dateKeyOf(date)}-${task.id}`}
-                      style={styles.dayTaskRow}
-                    >
-                      <Text
-                        style={[
-                          styles.dayTaskLabel,
-                          { color: theme.colors.textSecondary },
-                        ]}
-                      >
-                        {DAY_SHORT_LABELS[
-                          date.getDay() as DayOfWeek
-                        ].toUpperCase()}{' '}
-                        {date.getDate()}
-                        {taskTimeOf(task)
-                          ? ` · ${taskTimeOf(task)}`
-                          : ` · Todo el día`}
-                        {isToday ? ' · Hoy' : ''}
-                      </Text>
-                      <TaskRow
-                        task={task}
-                        assignee={getMemberById(task.assigneeId)}
-                        onPressCheck={() =>
-                          task.assigneeId
-                            ? toggleAssigned(task.id)
-                            : claimFreeTask(task.id)
-                        }
-                        locked={!canCheckTask(task)}
-                        {...renderQuickAssignProps(task)}
-                      />
-                    </View>
-                  )),
-            )}
           </>
         ) : (
           <>
@@ -930,7 +486,7 @@ export function TareasScreen() {
                                   ? () => assumeTask(task.id)
                                   : undefined
                               }
-                              {...renderQuickAssignProps(task)}
+                              onPressEdit={() => openEditForm(task)}
                             />
                           ))}
                           {done.length > 0 ? (
@@ -944,6 +500,7 @@ export function TareasScreen() {
                                   onPressCheck={() => toggleAssigned(task.id)}
                                   locked={!canCheckTask(task)}
                                   muted
+                                  onDelete={() => deleteTask(task.id)}
                                 />
                               ))}
                             </>
@@ -976,7 +533,7 @@ export function TareasScreen() {
                         key={task.id}
                         task={task}
                         onPressCheck={() => claimFreeTask(task.id)}
-                        {...renderQuickAssignProps(task)}
+                        onPressEdit={() => openEditForm(task)}
                       />
                     ))}
                     {doneFree.length > 0 ? (
@@ -988,6 +545,7 @@ export function TareasScreen() {
                             task={task}
                             onPressCheck={() => reopen(task.id)}
                             muted
+                            onDelete={() => deleteTask(task.id)}
                           />
                         ))}
                       </>
@@ -1003,16 +561,6 @@ export function TareasScreen() {
       <NewTaskForm
         visible={formVisible || !!editingTask}
         task={editingTask}
-        initialDays={
-          viewMode === 'dias' && !editingTask
-            ? selectedWeekdays
-            : undefined
-        }
-        initialDate={
-          viewMode === 'dias' && !editingTask && selectedDateList.length > 0
-            ? dateKeyOf(selectedDateList[0])
-            : undefined
-        }
         onClose={closeForm}
       />
       <NewCategoryModal
@@ -1113,82 +661,5 @@ const styles = StyleSheet.create({
   newCategoryText: {
     fontSize: 14,
     fontWeight: '700',
-  },
-  calContainer: {
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    marginBottom: 20,
-  },
-  calHeaderRow: {
-    flexDirection: 'row',
-    marginBottom: 8,
-  },
-  calHeaderText: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  calRowWrap: {
-    position: 'relative',
-  },
-  calRow: {
-    flexDirection: 'row',
-    marginBottom: 2,
-  },
-  calCell: {
-    flex: 1,
-    minHeight: 52,
-    alignItems: 'center',
-    justifyContent: 'flex-start',
-    paddingTop: 6,
-    margin: 1,
-    borderRadius: 10,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
-  },
-  calDayNum: {
-    fontSize: 15,
-    zIndex: 2,
-  },
-  calDotMore: {
-    fontSize: 8,
-    fontWeight: '700',
-    marginTop: 2,
-    zIndex: 2,
-  },
-  calBarsLayer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    bottom: 0,
-    zIndex: 1,
-  },
-  calBar: {
-    position: 'absolute',
-    height: 6,
-    borderRadius: 3,
-    zIndex: 1,
-  },
-  dayTaskRow: {
-    gap: 2,
-    marginBottom: 2,
-  },
-  dayTaskLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    marginLeft: 4,
-  },
-  dayBlock: {
-    gap: 6,
-    marginBottom: 12,
-  },
-  dayLabel: {
-    fontSize: 13,
-    fontWeight: '800',
-    textTransform: 'capitalize',
-    marginBottom: 4,
-    marginLeft: 4,
   },
 });

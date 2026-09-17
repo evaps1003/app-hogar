@@ -25,12 +25,6 @@ const TABS: Tab[] = [
     activeIcon: 'clipboard',
   },
   {
-    route: 'Calendario',
-    label: 'Calendario',
-    icon: 'calendar-outline',
-    activeIcon: 'calendar',
-  },
-  {
     route: 'Compras',
     label: 'Compras',
     icon: 'cart-outline',

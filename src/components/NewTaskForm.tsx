@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,39 +15,53 @@ import { useTasks } from '../data/TaskContext';
 import { useHousehold } from '../data/HouseholdContext';
 import {
   DAY_LABELS,
-  WEEKDAY_ORDER,
-  getCurrentWeekKey,
-  toDateKey,
-  fromDateKey,
-  addDays,
-  addWeeks,
-  startOfWeek,
-  weekRangeLabel,
-  weekRangeFullLabel,
-  getWeekOptions,
-  weekKeyOffset,
+  DAY_LONG_LABELS,
   MONTH_NAMES,
+  MONTH_SHORT,
+  WEEKDAY_ORDER,
+  addDays,
+  dateInWeekMonday,
+  fromDateKey,
+  scheduledOccursOn,
+  startOfWeek,
+  toDateKey,
 } from '../data/schedule';
 import {
   DayOfWeek,
   RotatingTurn,
+  ScheduledSchedule,
   Task,
   TaskCategory,
   TaskSchedule,
 } from '../data/types';
 import { buildCategoryOptions } from '../data/categories';
-import { useTheme } from '../theme';
+import { Theme, useTheme } from '../theme';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const ROTATION_FREQUENCY = [
+const FREQUENCY_OPTIONS = [
   { dias: 7, label: 'Semanal' },
   { dias: 15, label: 'Quincenal' },
   { dias: 30, label: 'Mensual' },
 ];
 
-type TaskKind = 'free' | 'assigned';
-type ScheduleMode = 'none' | 'flexible' | 'specific' | 'once';
+const TIME_PRESETS = [
+  { label: 'Mañana', value: '09:00' },
+  { label: 'Mediodía', value: '13:00' },
+  { label: 'Tarde', value: '17:00' },
+  { label: 'Noche', value: '20:00' },
+];
+
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+const MINUTES = Array.from({ length: 12 }, (_, i) => i * 5);
+
+const STEPS = [
+  { n: 1, label: 'Datos' },
+  { n: 2, label: 'Quién' },
+  { n: 3, label: 'Cuándo' },
+];
+
+type Temporality = 'puntual' | 'periodica';
 
 interface NewTaskFormProps {
   visible: boolean;
@@ -55,6 +70,203 @@ interface NewTaskFormProps {
   initialDays?: DayOfWeek[];
   initialDate?: string;
   task?: Task | null;
+}
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function parseTime(value: string): { h: number; m: number } {
+  const [hh, mm] = value.split(':').map(Number);
+  return {
+    h: Number.isFinite(hh) && hh >= 0 && hh <= 23 ? hh : 10,
+    m: Number.isFinite(mm) && mm >= 0 && mm <= 59 ? mm : 0,
+  };
+}
+
+function formatLongDate(key: string): string {
+  const d = fromDateKey(key);
+  return `${DAY_LONG_LABELS[d.getDay() as DayOfWeek]} ${d.getDate()} de ${MONTH_NAMES[d.getMonth()]}`;
+}
+
+function formatRangeLong(startKey: string, endKey: string): string {
+  const s = fromDateKey(startKey);
+  const e = fromDateKey(endKey);
+  return `${DAY_LONG_LABELS[s.getDay() as DayOfWeek]} ${s.getDate()} – ${DAY_LONG_LABELS[e.getDay() as DayOfWeek]} ${e.getDate()} de ${MONTH_NAMES[e.getMonth()]}`;
+}
+
+function DurationToggle({
+  mode,
+  onChange,
+  theme,
+  labels,
+}: {
+  mode: boolean;
+  onChange: (next: boolean) => void;
+  theme: Theme;
+  labels: [string, string];
+}) {
+  return (
+    <View style={styles.durationWrap}>
+      <Pressable
+        onPress={() => onChange(false)}
+        style={[
+          styles.durationOption,
+          {
+            backgroundColor: !mode
+              ? theme.colors.primaryStrong
+              : theme.colors.surfaceVariant,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.durationText,
+            {
+              color: !mode ? '#FFFFFF' : theme.colors.textSecondary,
+              fontWeight: !mode ? '800' : '600',
+            },
+          ]}
+        >
+          {labels[0]}
+        </Text>
+      </Pressable>
+      <Pressable
+        onPress={() => onChange(true)}
+        style={[
+          styles.durationOption,
+          {
+            backgroundColor: mode
+              ? theme.colors.primaryStrong
+              : theme.colors.surfaceVariant,
+          },
+        ]}
+      >
+        <Text
+          style={[
+            styles.durationText,
+            {
+              color: mode ? '#FFFFFF' : theme.colors.textSecondary,
+              fontWeight: mode ? '800' : '600',
+            },
+          ]}
+        >
+          {labels[1]}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function InlineCalendar({
+  value,
+  onChange,
+  theme,
+}: {
+  value: string;
+  onChange: (key: string) => void;
+  theme: Theme;
+}) {
+  const [cursor, setCursor] = useState<Date>(() =>
+    value ? fromDateKey(value) : new Date(),
+  );
+
+  useEffect(() => {
+    if (value) setCursor(fromDateKey(value));
+  }, [value]);
+
+  const calYear = cursor.getFullYear();
+  const calMonth = cursor.getMonth();
+  const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
+  const firstDow = new Date(calYear, calMonth, 1).getDay() as DayOfWeek;
+  const startOffset = (firstDow + 6) % 7;
+  const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < startOffset; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length < totalCells) cells.push(null);
+  const todayKey = toDateKey(new Date());
+
+  return (
+    <View style={styles.calBox}>
+      <View style={styles.calNav}>
+        <Pressable hitSlop={8} onPress={() => setCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}>
+          <Ionicons name="chevron-back" size={20} color={theme.colors.primaryStrong} />
+        </Pressable>
+        <Text style={[styles.calNavTitle, { color: theme.colors.textPrimary }]}>
+          {MONTH_NAMES[calMonth]} {calYear}
+        </Text>
+        <Pressable hitSlop={8} onPress={() => setCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}>
+          <Ionicons name="chevron-forward" size={20} color={theme.colors.primaryStrong} />
+        </Pressable>
+      </View>
+      <View style={styles.calHeaderRow}>
+        {WEEKDAY_ORDER.map((dow) => (
+          <Text key={dow} style={[styles.calHeaderText, { color: theme.colors.textSecondary }]}>
+            {DAY_LABELS[dow]}
+          </Text>
+        ))}
+      </View>
+      {Array.from({ length: cells.length / 7 }, (_, row) => {
+        const slice = cells.slice(row * 7, (row + 1) * 7);
+        return (
+          <View key={row} style={styles.calRow}>
+            {slice.map((day, col) => {
+              if (day == null) return <View key={col} style={styles.calCell} />;
+              const key = toDateKey(new Date(calYear, calMonth, day));
+              const isSelected = value === key;
+              const isToday = key === todayKey;
+              return (
+                <Pressable
+                  key={col}
+                  onPress={() => onChange(key)}
+                  style={[
+                    styles.calCell,
+                    isSelected && { backgroundColor: theme.colors.primarySoft },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.calDayNum,
+                      {
+                        color: isToday
+                          ? theme.colors.primaryStrong
+                          : theme.colors.textPrimary,
+                        fontWeight: isToday ? '800' : '500',
+                      },
+                    ]}
+                  >
+                    {day}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        );
+      })}
+      <View style={styles.calQuick}>
+        <Pressable
+          onPress={() => {
+            onChange(toDateKey(new Date()));
+            setCursor(new Date());
+          }}
+          style={[styles.calQuickPill, { backgroundColor: theme.colors.surface }]}
+        >
+          <Text style={[styles.calQuickText, { color: theme.colors.primaryStrong }]}>Hoy</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            const t = addDays(new Date(), 1);
+            onChange(toDateKey(t));
+            setCursor(t);
+          }}
+          style={[styles.calQuickPill, { backgroundColor: theme.colors.surface }]}
+        >
+          <Text style={[styles.calQuickText, { color: theme.colors.primaryStrong }]}>Mañana</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
 }
 
 export function NewTaskForm({
@@ -70,156 +282,157 @@ export function NewTaskForm({
   const { addTask, updateTask, deleteTask } = useTasks();
   const categoryOptions = buildCategoryOptions(customCategories);
 
+  const cardStyle = [styles.card, { backgroundColor: theme.colors.surfaceVariant }];
+
+  const [step, setStep] = useState(1);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState<TaskCategory>('otros');
-  const [kind, setKind] = useState<TaskKind>('free');
-  const [assigneeId, setAssigneeId] = useState<string | null>(
-    members[0]?.id ?? null,
-  );
-  const [mode, setMode] = useState<ScheduleMode>('none');
-  const [days, setDays] = useState<DayOfWeek[]>([]);
-  const [time, setTime] = useState('');
-  const [repeatWeekly, setRepeatWeekly] = useState(false);
-  const [dueDate, setDueDate] = useState('');
-  const [flexWeekOffset, setFlexWeekOffset] = useState(0);
-  const [calCursor, setCalCursor] = useState<Date>(new Date());
-  const [timeEditorOpen, setTimeEditorOpen] = useState(false);
-  const [timeEditorHour, setTimeEditorHour] = useState(10);
-  const [timeEditorMin, setTimeEditorMin] = useState(0);
+
+  const [assigneeId, setAssigneeId] = useState<string | null>(null);
   const [rotating, setRotating] = useState(false);
   const [turnMembers, setTurnMembers] = useState<string[]>([]);
-  const [frecuenciaDias, setFrecuenciaDias] = useState(7);
+
+  const [temporality, setTemporality] = useState<Temporality>('puntual');
+  const [dueDate, setDueDate] = useState('');
+  const [startDate, setStartDate] = useState('');
+  const [days, setDays] = useState<DayOfWeek[]>([]);
+  const [repeatIntervalDays, setRepeatIntervalDays] = useState(7);
   const [customDias, setCustomDias] = useState('');
+  const [time, setTime] = useState('');
+
+  const [calOpen, setCalOpen] = useState(false);
+  const [startCalOpen, setStartCalOpen] = useState(false);
+  const [endCalOpen, setEndCalOpen] = useState(false);
+  const [timeOpen, setTimeOpen] = useState(false);
+  const [rangeMode, setRangeMode] = useState(false);
+  const [endDate, setEndDate] = useState('');
 
   useEffect(() => {
     if (!visible) return;
-    if (task) {
-      const rot = task.rotacion;
-      const hasRotacion = !!rot;
-      setTitle(task.title);
-      setCategory(task.category ?? 'otros');
-      setRotating(hasRotacion);
-      setTurnMembers(rot?.miembrosTurno ?? []);
-      setFrecuenciaDias(rot?.frecuenciaRotacion ?? 7);
-      setCustomDias('');
-      setKind(hasRotacion || task.assigneeId ? 'assigned' : 'free');
-      setAssigneeId(task.assigneeId ?? members[0]?.id ?? null);
-      const sched = task.schedule;
-      if (hasRotacion || !sched) {
-        setMode('none');
-        setDays([]);
-        setTime('');
-        setDueDate('');
-        setRepeatWeekly(false);
-        setFlexWeekOffset(0);
-      } else if (sched.type === 'flexible') {
-        setMode('flexible');
-        setDays([]);
-        setTime('');
-        setDueDate('');
-        setRepeatWeekly(false);
-        setFlexWeekOffset(weekKeyOffset(sched.weekKey));
-      } else if (sched.type === 'once') {
-        setMode('once');
-        setDays([]);
-        setTime(sched.time ?? '');
-        setDueDate(sched.dueDate);
-        setRepeatWeekly(false);
-        setFlexWeekOffset(0);
-        setCalCursor(fromDateKey(sched.dueDate));
-      } else {
-        setMode('specific');
-        setDays(sched.days);
-        setTime(sched.time ?? '');
-        setDueDate('');
-        setRepeatWeekly(sched.repeatWeekly);
-        setFlexWeekOffset(0);
-      }
-      setTimeEditorOpen(false);
-      return;
-    }
-    setTitle('');
-    setCategory('otros');
-    const prefill = initialDays && initialDays.length > 0 ? initialDays : initialDay ? [initialDay] : [];
-    if (initialDate) {
-      setMode('once');
-      setDueDate(initialDate);
-      setDays([]);
-      setKind('assigned');
-      setAssigneeId(members[0]?.id ?? null);
-      setCalCursor(fromDateKey(initialDate));
-    } else {
-      setMode(prefill.length > 0 ? 'specific' : 'none');
-      setDueDate('');
-      setDays(prefill);
-      setKind(prefill.length > 0 ? 'assigned' : 'free');
-      setAssigneeId(members[0]?.id ?? null);
-      setCalCursor(new Date());
-    }
-    setTime('');
-    setRepeatWeekly(false);
-    setFlexWeekOffset(0);
-    setTimeEditorOpen(false);
-    setRotating(false);
-    setTurnMembers([]);
-    setFrecuenciaDias(7);
-    setCustomDias('');
-  }, [visible, members, initialDay, initialDays, initialDate, task]);
+    setStep(1);
+    setCalOpen(false);
+    setStartCalOpen(false);
+    setEndCalOpen(false);
+    setTimeOpen(false);
 
-  const selectKind = (next: TaskKind) => {
-    setKind(next);
-    if (next === 'free') {
+    if (!task) {
+      setTitle('');
+      setCategory('otros');
       setRotating(false);
       setTurnMembers([]);
+      const prefillDate = initialDate ?? toDateKey(new Date());
+      const prefillDays =
+        initialDays && initialDays.length > 0
+          ? initialDays
+          : initialDay
+            ? [initialDay]
+            : initialDate
+              ? [fromDateKey(initialDate).getDay() as DayOfWeek]
+              : [];
+      setTemporality('puntual');
+      setDueDate(prefillDate);
+      setStartDate(prefillDate);
+      setDays(prefillDays);
+      setRepeatIntervalDays(7);
+      setCustomDias('');
+      setTime('');
+      setRangeMode(false);
+      setEndDate('');
+      setAssigneeId(members[0]?.id ?? null);
+      return;
     }
-  };
 
-  const toggleDay = (day: DayOfWeek) => {
-    setDays((prev) =>
-      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day],
-    );
-    if (mode !== 'specific') setMode('specific');
-  };
+    setTitle(task.title);
+    setCategory(task.category ?? 'otros');
 
-  const selectMode = (next: ScheduleMode) => {
-    if (next === mode) return;
-    setMode(next);
-    if (next === 'flexible') {
+    const rot = task.rotacion;
+    const hasRotacion = !!rot;
+    setRotating(hasRotacion);
+    setTurnMembers(rot?.miembrosTurno ?? []);
+
+    const sched = task.schedule;
+    const todayKey = toDateKey(new Date());
+
+    if (sched?.type === 'once') {
+      setTemporality('puntual');
+      setDueDate(sched.dueDate);
+      setStartDate(sched.dueDate);
       setDays([]);
-      setDueDate('');
-      setTimeEditorOpen(false);
-    } else if (next === 'once') {
+      setRepeatIntervalDays(7);
+      setCustomDias('');
+      setTime(sched.time ?? '');
+      setRangeMode(!!sched.endDate && sched.endDate !== sched.dueDate);
+      setEndDate(sched.endDate ?? '');
+    } else if (sched?.type === 'scheduled') {
+      setTemporality('periodica');
+      const interval =
+        sched.repeatIntervalDays && sched.repeatIntervalDays > 0
+          ? sched.repeatIntervalDays
+          : 7;
+      const start = sched.startDate ?? todayKey;
+      setDueDate(start);
+      setStartDate(start);
+      setDays(sched.days.length > 0 ? sched.days : []);
+      setRepeatIntervalDays(interval);
+      setCustomDias('');
+      setTime(sched.time ?? '');
+      setRangeMode(!!sched.endDate);
+      setEndDate(sched.endDate ?? '');
+    } else if (sched?.type === 'flexible') {
+      setTemporality('periodica');
+      setDueDate(todayKey);
+      setStartDate(todayKey);
+      setDays([new Date().getDay() as DayOfWeek]);
+      setRepeatIntervalDays(7);
+      setCustomDias('');
+      setTime('');
+      setRangeMode(false);
+      setEndDate('');
+    } else {
+      setTemporality('puntual');
+      setDueDate(todayKey);
+      setStartDate(todayKey);
       setDays([]);
-      setFlexWeekOffset(0);
-    } else if (next === 'specific') {
-      setDueDate('');
+      setRepeatIntervalDays(7);
+      setCustomDias('');
+      setTime('');
+      setRangeMode(false);
+      setEndDate('');
     }
-    setTimeEditorOpen(false);
-  };
 
-  const openTimeEditor = () => {
-    const [h, m] = (time || '10:00').split(':').map(Number);
-    setTimeEditorHour(Number.isFinite(h) && h >= 0 && h <= 23 ? h : 10);
-    setTimeEditorMin(Number.isFinite(m) && m >= 0 && m <= 59 ? m : 0);
-    setTimeEditorOpen(true);
-  };
-
-  const applyTimeEditor = () => {
-    setTime(
-      `${String(timeEditorHour).padStart(2, '0')}:${String(
-        timeEditorMin,
-      ).padStart(2, '0')}`,
+    setAssigneeId(
+      hasRotacion
+        ? rot!.miembrosTurno[rot!.indiceTurnoActual] ?? null
+        : task.assigneeId ?? null,
     );
-    setTimeEditorOpen(false);
+  }, [visible, members, initialDay, initialDays, initialDate, task]);
+
+  const step1Ready = title.trim().length > 0;
+  const step2Ready = !rotating || turnMembers.length > 0;
+  const step3Ready =
+    temporality === 'puntual'
+      ? dueDate.length > 0 &&
+        (!rangeMode || (endDate.length > 0 && endDate >= dueDate))
+      : rangeMode
+        ? startDate.length > 0 && endDate.length > 0 && endDate >= startDate
+        : startDate.length > 0 && days.length > 0;
+  const canSubmit = step1Ready && step2Ready && step3Ready;
+  const canAdvance = step === 1 ? step1Ready : step === 2 ? step2Ready : step3Ready;
+
+  const goNext = () => {
+    if (!canAdvance) return;
+    setStep((s) => Math.min(3, s + 1));
   };
 
-  const clearTime = () => {
-    setTime('');
-    setTimeEditorOpen(false);
-  };
-
-  const moveCalMonth = (delta: number) => {
-    setCalCursor((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
+  const toggleRotating = () => {
+    setRotating((prev) => {
+      const next = !prev;
+      if (next && turnMembers.length === 0) {
+        const first = assigneeId ?? members[0]?.id ?? null;
+        if (first) setTurnMembers([first]);
+      }
+      return next;
+    });
   };
 
   const toggleTurnMember = (id: string) => {
@@ -230,8 +443,34 @@ export function NewTaskForm({
     );
   };
 
+  const selectTemporality = (next: Temporality) => {
+    if (next === temporality) return;
+    setTemporality(next);
+    setCalOpen(false);
+    setStartCalOpen(false);
+    setEndCalOpen(false);
+    setTimeOpen(false);
+    if (next === 'periodica' && days.length === 0 && startDate && !rangeMode) {
+      setDays([fromDateKey(startDate).getDay() as DayOfWeek]);
+    }
+  };
+
+  const toggleDay = (day: DayOfWeek) => {
+    setDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day],
+    );
+  };
+
+  const handleStartDateChange = (key: string) => {
+    setStartDate(key);
+    setDueDate(key);
+    if (days.length === 0 && !rangeMode) {
+      setDays([fromDateKey(key).getDay() as DayOfWeek]);
+    }
+  };
+
   const pickFrequency = (dias: number) => {
-    setFrecuenciaDias(dias);
+    setRepeatIntervalDays(dias);
     setCustomDias('');
   };
 
@@ -239,41 +478,58 @@ export function NewTaskForm({
     const digits = text.replace(/[^0-9]/g, '');
     setCustomDias(digits);
     const value = Number(digits);
-    if (value > 0) setFrecuenciaDias(value);
+    if (value > 0) setRepeatIntervalDays(value);
   };
 
-  const canSubmit =
-    title.trim().length > 0 &&
-    (!rotating || turnMembers.length > 0) &&
-    (mode !== 'once' || dueDate.length > 0);
+  const stepDays = (delta: number) => {
+    const next = Math.min(365, Math.max(1, repeatIntervalDays + delta));
+    setRepeatIntervalDays(next);
+    setCustomDias(String(next));
+  };
+
+  const setHour = (h: number) => {
+    const { m } = parseTime(time);
+    setTime(`${pad(h)}:${pad(m)}`);
+  };
+
+  const setMinute = (m: number) => {
+    const { h } = parseTime(time);
+    setTime(`${pad(h)}:${pad(m)}`);
+  };
 
   const buildSchedule = (): TaskSchedule | undefined => {
-    if (rotating) return undefined;
-    if (mode === 'flexible') {
-      const options = getWeekOptions();
-      return {
-        type: 'flexible',
-        weekKey:
-          options[flexWeekOffset]?.weekKey ?? getCurrentWeekKey(),
-      };
-    }
-    if (mode === 'once' && dueDate.length > 0) {
+    if (temporality === 'puntual') {
+      if (!dueDate) return undefined;
+      const isRange = rangeMode && !!endDate && endDate > dueDate;
       return {
         type: 'once',
         dueDate,
         time: time.trim() || null,
+        endDate: isRange ? endDate : undefined,
       };
     }
-    if (mode === 'specific' && days.length > 0) {
+    if (!startDate) return undefined;
+    if (rangeMode) {
+      if (!endDate || endDate < startDate) return undefined;
       return {
         type: 'scheduled',
-        days,
+        days: [],
         time: time.trim() || null,
-        repeatWeekly,
-        weekKey: repeatWeekly ? undefined : getCurrentWeekKey(),
+        repeatWeekly: false,
+        repeatIntervalDays,
+        startDate,
+        endDate,
       };
     }
-    return undefined;
+    if (days.length === 0) return undefined;
+    return {
+      type: 'scheduled',
+      days,
+      time: time.trim() || null,
+      repeatWeekly: false,
+      repeatIntervalDays,
+      startDate,
+    };
   };
 
   const buildRotacion = (): RotatingTurn | undefined => {
@@ -281,12 +537,14 @@ export function NewTaskForm({
     const now = Date.now();
     const base = task?.rotacion;
     const indice = base?.indiceTurnoActual ?? 0;
-    const proxima = base?.proximaRotacion ?? now + frecuenciaDias * DAY_MS;
+    const enMiembros =
+      indice < turnMembers.length ? indice : 0;
+    const proxima = base?.proximaRotacion ?? now + repeatIntervalDays * DAY_MS;
     return {
       esRotativa: true,
       miembrosTurno: turnMembers,
-      indiceTurnoActual: indice,
-      frecuenciaRotacion: frecuenciaDias,
+      indiceTurnoActual: enMiembros,
+      frecuenciaRotacion: repeatIntervalDays,
       fechaInicioCiclo: base?.fechaInicioCiclo ?? now,
       proximaRotacion: proxima,
     };
@@ -299,11 +557,14 @@ export function NewTaskForm({
 
   const handleSubmit = () => {
     if (!canSubmit) return;
+    const rotacion = buildRotacion();
     const data = {
       title: title.trim(),
-      assigneeId: rotating ? turnMembers[0] ?? null : assigneeId,
+      assigneeId: rotacion
+        ? rotacion.miembrosTurno[rotacion.indiceTurnoActual] ?? null
+        : assigneeId,
       schedule: buildSchedule(),
-      rotacion: buildRotacion(),
+      rotacion,
       category,
     };
     if (task) {
@@ -333,341 +594,1047 @@ export function NewTaskForm({
     );
   };
 
-  const renderTimeField = () => (
-    <Pressable onPress={openTimeEditor} style={[styles.timeField, { backgroundColor: theme.colors.surfaceVariant }]}>
-      <Ionicons name="time-outline" size={15} color={theme.colors.textSecondary} />
-      <Text style={[styles.timeFieldText, { color: time ? theme.colors.textPrimary : theme.colors.textSecondary }]}>
-        {time || 'Sin hora · todo el día'}
-      </Text>
-      <Ionicons name="chevron-down" size={14} color={theme.colors.textSecondary} />
-    </Pressable>
-  );
+  const startMonday = startDate
+    ? startOfWeek(fromDateKey(startDate))
+    : startOfWeek(new Date());
+  const contextWeek = WEEKDAY_ORDER.map((dow) => {
+    const date = dateInWeekMonday(startMonday, dow);
+    return { dow, date, label: `${DAY_LABELS[dow]} ${date.getDate()}` };
+  });
 
-  const renderTimePanel = () => (
-    <View style={[styles.timeEditor, { backgroundColor: theme.colors.surfaceVariant }]}>
-      <View style={styles.timeStepperRow}>
-        <View style={styles.timeStepper}>
-          <Text style={[styles.timeStepperLabel, { color: theme.colors.textSecondary }]}>Hora</Text>
-          <View style={styles.timeStepCtl}>
-            <Pressable hitSlop={6} onPress={() => setTimeEditorHour((p) => (p + 23) % 24)}>
-              <Ionicons name="remove" size={20} color={theme.colors.primaryStrong} />
+  const nextOccurrences = useMemo(() => {
+    if (temporality !== 'periodica' || !startDate || rangeMode || days.length === 0) return [];
+    const sched: ScheduledSchedule = {
+      type: 'scheduled',
+      days,
+      time: time || null,
+      repeatWeekly: false,
+      repeatIntervalDays,
+      startDate,
+    };
+    const start = fromDateKey(startDate);
+    const horizon = addDays(start, repeatIntervalDays * 4 + 14);
+    const found: Date[] = [];
+    let cursor = start;
+    while (found.length < 4 && cursor.getTime() <= horizon.getTime()) {
+      if (scheduledOccursOn(sched, cursor)) found.push(cursor);
+      cursor = addDays(cursor, 1);
+    }
+    return found;
+  }, [temporality, startDate, days, repeatIntervalDays, time, rangeMode]);
+
+  const nextRangeStarts = useMemo(() => {
+    if (temporality !== 'periodica' || !startDate || !rangeMode) return [];
+    const start = fromDateKey(startDate);
+    const horizon = addDays(start, repeatIntervalDays * 4);
+    const found: Date[] = [];
+    for (let i = 0; i < 4; i++) {
+      const cycle = addDays(start, i * repeatIntervalDays);
+      if (cycle.getTime() > horizon.getTime()) break;
+      found.push(cycle);
+    }
+    return found;
+  }, [temporality, startDate, rangeMode, repeatIntervalDays]);
+
+  const renderSteps = () => (
+    <View style={styles.stepsRow}>
+      {STEPS.map((s, idx) => {
+        const active = step === s.n;
+        const done = step > s.n;
+        return (
+          <React.Fragment key={s.n}>
+            {idx > 0 ? (
+              <View
+                style={[
+                  styles.stepConnector,
+                  {
+                    backgroundColor:
+                      active || done
+                        ? theme.colors.primaryStrong
+                        : theme.colors.divider,
+                  },
+                ]}
+              />
+            ) : null}
+            <Pressable
+              onPress={() => done && setStep(s.n)}
+              style={[
+                styles.stepPill,
+                {
+                  backgroundColor: active
+                    ? theme.colors.primaryStrong
+                    : done
+                      ? theme.colors.primarySoft
+                      : theme.colors.surfaceVariant,
+                },
+              ]}
+            >
+              {done ? (
+                <Ionicons
+                  name="checkmark"
+                  size={12}
+                  color={theme.colors.primaryStrong}
+                />
+              ) : (
+                <Text
+                  style={[
+                    styles.stepNum,
+                    { color: active ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  {s.n}
+                </Text>
+              )}
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.stepLabelText,
+                  { color: active ? '#FFFFFF' : theme.colors.textPrimary },
+                ]}
+              >
+                {s.label}
+              </Text>
             </Pressable>
-            <Text style={[styles.timeStepValue, { color: theme.colors.textPrimary }]}>
-              {String(timeEditorHour).padStart(2, '0')}
-            </Text>
-            <Pressable hitSlop={6} onPress={() => setTimeEditorHour((p) => (p + 1) % 24)}>
-              <Ionicons name="add" size={20} color={theme.colors.primaryStrong} />
-            </Pressable>
-          </View>
-        </View>
-        <Text style={[styles.timeColon, { color: theme.colors.textSecondary }]}>:</Text>
-        <View style={styles.timeStepper}>
-          <Text style={[styles.timeStepperLabel, { color: theme.colors.textSecondary }]}>Min</Text>
-          <View style={styles.timeStepCtl}>
-            <Pressable hitSlop={6} onPress={() => setTimeEditorMin((p) => (p + 55) % 60)}>
-              <Ionicons name="remove" size={20} color={theme.colors.primaryStrong} />
-            </Pressable>
-            <Text style={[styles.timeStepValue, { color: theme.colors.textPrimary }]}>
-              {String(timeEditorMin).padStart(2, '0')}
-            </Text>
-            <Pressable hitSlop={6} onPress={() => setTimeEditorMin((p) => (p + 5) % 60)}>
-              <Ionicons name="add" size={20} color={theme.colors.primaryStrong} />
-            </Pressable>
-          </View>
-        </View>
-      </View>
-      <View style={styles.timeEditorActions}>
-        <Pressable onPress={clearTime} style={styles.timeEditorGhost}>
-          <Ionicons name="trash-outline" size={14} color={theme.colors.danger} />
-          <Text style={[styles.timeEditorGhostText, { color: theme.colors.danger }]}>Sin hora</Text>
-        </Pressable>
-        <Pressable onPress={applyTimeEditor} style={[styles.timeEditorApply, { backgroundColor: theme.colors.primaryStrong }]}>
-          <Text style={styles.timeEditorApplyText}>Listo</Text>
-        </Pressable>
-      </View>
+          </React.Fragment>
+        );
+      })}
     </View>
   );
 
-  const renderTimeEditor = () => (
+  const renderStep1 = () => (
     <>
-      {renderTimeField()}
-      {timeEditorOpen ? renderTimePanel() : null}
+      <View style={cardStyle}>
+        <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+          Título de la tarea
+        </Text>
+        <TextInput
+          value={title}
+          onChangeText={setTitle}
+          placeholder="Ej.: Regar las plantas"
+          placeholderTextColor={theme.colors.tabInactive}
+          autoFocus
+          returnKeyType="done"
+          style={[
+            styles.input,
+            {
+              backgroundColor: theme.colors.surfaceVariant,
+              color: theme.colors.textPrimary,
+              borderRadius: theme.radius.md,
+            },
+          ]}
+        />
+      </View>
+
+      <View style={cardStyle}>
+        <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+          Categoría
+        </Text>
+        <View style={styles.categoryRow}>
+          {categoryOptions.map((cat) => {
+            const selected = category === cat.key;
+            return (
+              <Pressable
+                key={cat.key}
+                onPress={() => setCategory(cat.key)}
+                style={[
+                  styles.categoryPill,
+                  {
+                    backgroundColor: selected
+                      ? theme.colors.primaryStrong
+                      : theme.colors.surfaceVariant,
+                  },
+                ]}
+              >
+                <Ionicons
+                  name={cat.icon as keyof typeof Ionicons.glyphMap}
+                  size={15}
+                  color={selected ? '#FFFFFF' : theme.colors.textSecondary}
+                />
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.categoryText,
+                    {
+                      color: selected
+                        ? '#FFFFFF'
+                        : theme.colors.textSecondary,
+                      fontWeight: selected ? '800' : '600',
+                    },
+                  ]}
+                >
+                  {cat.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
     </>
   );
 
-  const renderCalendar = () => {
-    const calYear = calCursor.getFullYear();
-    const calMonth = calCursor.getMonth();
-    const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-    const firstDow = new Date(calYear, calMonth, 1).getDay() as DayOfWeek;
-    const startOffset = (firstDow + 6) % 7;
-    const totalCells = Math.ceil((startOffset + daysInMonth) / 7) * 7;
-    const cells: (number | null)[] = [];
-    for (let i = 0; i < startOffset; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) cells.push(d);
-    while (cells.length < totalCells) cells.push(null);
-    const todayKey = toDateKey(new Date());
-
-    return (
-      <View style={styles.calBox}>
-        <View style={styles.calNav}>
-          <Pressable hitSlop={8} onPress={() => moveCalMonth(-1)}>
-            <Ionicons name="chevron-back" size={20} color={theme.colors.primaryStrong} />
-          </Pressable>
-          <Text style={[styles.calNavTitle, { color: theme.colors.textPrimary }]}>
-            {MONTH_NAMES[calMonth]} {calYear}
-          </Text>
-          <Pressable hitSlop={8} onPress={() => moveCalMonth(1)}>
-            <Ionicons name="chevron-forward" size={20} color={theme.colors.primaryStrong} />
-          </Pressable>
-        </View>
-        <View style={styles.calHeaderRow}>
-          {WEEKDAY_ORDER.map((dow) => (
-            <Text key={dow} style={[styles.calHeaderText, { color: theme.colors.textSecondary }]}>
-              {DAY_LABELS[dow]}
+  const renderStep2 = () => (
+    <>
+      <View style={cardStyle}>
+        <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+          Asignar a
+        </Text>
+        <View style={styles.membersRow}>
+          <Pressable
+            onPress={() => setAssigneeId(null)}
+            style={[
+              styles.memberChip,
+              {
+                backgroundColor:
+                  !rotating && assigneeId === null
+                    ? theme.colors.primaryStrong
+                    : theme.colors.surfaceVariant,
+              },
+            ]}
+          >
+            <Ionicons
+              name="bag-handle-outline"
+              size={14}
+              color={
+                !rotating && assigneeId === null
+                  ? '#FFFFFF'
+                  : theme.colors.textSecondary
+              }
+            />
+            <Text
+              style={[
+                styles.memberChipText,
+                {
+                  color:
+                    !rotating && assigneeId === null
+                      ? '#FFFFFF'
+                      : theme.colors.textSecondary,
+                },
+              ]}
+            >
+              Bolsa común
             </Text>
-          ))}
+          </Pressable>
+          {members.map((member) => {
+            const selected = !rotating && assigneeId === member.id;
+            return (
+              <Pressable
+                key={member.id}
+                onPress={() => setAssigneeId(member.id)}
+                style={[
+                  styles.memberChip,
+                  {
+                    backgroundColor: selected
+                      ? theme.colors.primaryStrong
+                      : theme.colors.surfaceVariant,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.memberChipText,
+                    {
+                      color: selected
+                        ? '#FFFFFF'
+                        : theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  {member.name}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
-        {Array.from({ length: cells.length / 7 }, (_, row) => {
-          const slice = cells.slice(row * 7, (row + 1) * 7);
-          return (
-            <View key={row} style={styles.calRow}>
-              {slice.map((day, col) => {
-                if (day == null) return <View key={col} style={styles.calCell} />;
-                const date = new Date(calYear, calMonth, day);
-                const key = toDateKey(date);
-                const isSelected = dueDate === key;
-                const isToday = key === todayKey;
+      </View>
+
+      <Pressable
+        onPress={toggleRotating}
+        style={[
+          styles.toggleRow,
+          {
+            backgroundColor: theme.colors.surfaceVariant,
+            borderRadius: theme.radius.md,
+          },
+        ]}
+      >
+        <Ionicons
+          name="repeat"
+          size={18}
+          color={
+            rotating ? theme.colors.primaryStrong : theme.colors.tabInactive
+          }
+        />
+        <Text style={[styles.toggleText, { color: theme.colors.textPrimary }]}>
+          Tarea rotativa (avanzar turno automáticamente al completarse)
+        </Text>
+        <Ionicons
+          name={rotating ? 'checkbox' : 'square-outline'}
+          size={20}
+          color={
+            rotating ? theme.colors.primaryStrong : theme.colors.tabInactive
+          }
+        />
+      </Pressable>
+
+      {rotating ? (
+        <>
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Rueda de turnos
+            </Text>
+            <View style={styles.membersRow}>
+              {wheelMembers.map((member) => {
+                const order = turnMembers.indexOf(member.id);
+                const selected = order !== -1;
                 return (
                   <Pressable
-                    key={col}
-                    onPress={() => setDueDate(key)}
+                    key={member.id}
+                    onPress={() => toggleTurnMember(member.id)}
                     style={[
-                      styles.calCell,
-                      isSelected && { backgroundColor: theme.colors.primarySoft },
+                      styles.memberChip,
+                      {
+                        backgroundColor: selected
+                          ? theme.colors.primaryStrong
+                          : theme.colors.surfaceVariant,
+                      },
                     ]}
                   >
                     <Text
                       style={[
-                        styles.calDayNum,
+                        styles.memberChipText,
                         {
-                          color: isToday
-                            ? theme.colors.primaryStrong
-                            : theme.colors.textPrimary,
-                          fontWeight: isToday ? '800' : '500',
+                          color: selected
+                            ? '#FFFFFF'
+                            : theme.colors.textSecondary,
                         },
                       ]}
                     >
-                      {day}
+                      {selected ? `${order + 1}. ${member.name}` : member.name}
                     </Text>
                   </Pressable>
                 );
               })}
             </View>
-          );
-        })}
-        <View style={styles.calQuick}>
-          <Pressable onPress={() => { setDueDate(toDateKey(new Date())); setCalCursor(new Date()); }} style={[styles.calQuickPill, { backgroundColor: theme.colors.surfaceVariant }]}>
-            <Text style={[styles.calQuickText, { color: theme.colors.primaryStrong }]}>Hoy</Text>
+            <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
+              El turno 1 empieza como responsable; al completarse, rota
+              automáticamente al siguiente miembro.
+            </Text>
+          </View>
+        </>
+      ) : null}
+
+      {!rotating && assigneeId === null ? (
+        <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
+          Nadie lo reserva: irá a la Bolsa común para que quien pueda la tome y
+          se lleve su sello de mérito.
+        </Text>
+      ) : null}
+    </>
+  );
+
+  const renderTimeField = () => (
+    <Pressable
+      onPress={() => setTimeOpen((v) => !v)}
+      style={[styles.timeField, { backgroundColor: theme.colors.surfaceVariant }]}
+    >
+      <Ionicons name="time-outline" size={15} color={theme.colors.textSecondary} />
+      <Text
+        style={[
+          styles.timeFieldText,
+          { color: time ? theme.colors.textPrimary : theme.colors.textSecondary },
+        ]}
+      >
+        {time ? `A las ${time}` : 'Sin hora · todo el día'}
+      </Text>
+      <Ionicons
+        name={timeOpen ? 'chevron-up' : 'chevron-down'}
+        size={14}
+        color={theme.colors.textSecondary}
+      />
+    </Pressable>
+  );
+
+  const renderTimePanel = () => {
+    const { h, m } = parseTime(time);
+    return (
+      <View
+        style={[styles.timeEditor, { backgroundColor: theme.colors.surfaceVariant }]}
+      >
+        <View style={styles.presetRow}>
+          {TIME_PRESETS.map((p) => {
+            const selected = time === p.value;
+            return (
+              <Pressable
+                key={p.value}
+                onPress={() => setTime(p.value)}
+                style={[
+                  styles.presetPill,
+                  {
+                    backgroundColor: selected
+                      ? theme.colors.primaryStrong
+                      : theme.colors.surface,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.presetLabel,
+                    { color: selected ? '#FFFFFF' : theme.colors.textPrimary },
+                  ]}
+                >
+                  {p.label}
+                </Text>
+                <Text
+                  style={[
+                    styles.presetValue,
+                    { color: selected ? '#FFFFFF' : theme.colors.textSecondary },
+                  ]}
+                >
+                  {p.value}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={styles.timeColumns}>
+          <View style={styles.timeColumn}>
+            <Text style={[styles.timeColLabel, { color: theme.colors.textSecondary }]}>
+              Hora
+            </Text>
+            <ScrollView
+              style={styles.timeScroll}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              {HOURS.map((hh) => {
+                const selected = h === hh;
+                return (
+                  <Pressable
+                    key={hh}
+                    onPress={() => setHour(hh)}
+                    style={[
+                      styles.timePill,
+                      {
+                        backgroundColor: selected
+                          ? theme.colors.primaryStrong
+                          : theme.colors.surface,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.timePillText,
+                        {
+                          color: selected
+                            ? '#FFFFFF'
+                            : theme.colors.textPrimary,
+                        },
+                      ]}
+                    >
+                      {pad(hh)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+          <View style={styles.timeColumn}>
+            <Text style={[styles.timeColLabel, { color: theme.colors.textSecondary }]}>
+              Min
+            </Text>
+            <ScrollView
+              style={styles.timeScroll}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator={false}
+            >
+              {MINUTES.map((mm) => {
+                const selected = m === mm;
+                return (
+                  <Pressable
+                    key={mm}
+                    onPress={() => setMinute(mm)}
+                    style={[
+                      styles.timePill,
+                      {
+                        backgroundColor: selected
+                          ? theme.colors.primaryStrong
+                          : theme.colors.surface,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.timePillText,
+                        {
+                          color: selected
+                            ? '#FFFFFF'
+                            : theme.colors.textPrimary,
+                        },
+                      ]}
+                    >
+                      {pad(mm)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+        <View style={styles.timeEditorActions}>
+          <Pressable
+            onPress={() => {
+              setTime('');
+              setTimeOpen(false);
+            }}
+            style={styles.timeEditorGhost}
+          >
+            <Ionicons name="trash-outline" size={14} color={theme.colors.danger} />
+            <Text
+              style={[styles.timeEditorGhostText, { color: theme.colors.danger }]}
+            >
+              Sin hora
+            </Text>
           </Pressable>
-          <Pressable onPress={() => { const t = addDays(new Date(), 1); setDueDate(toDateKey(t)); setCalCursor(t); }} style={[styles.calQuickPill, { backgroundColor: theme.colors.surfaceVariant }]}>
-            <Text style={[styles.calQuickText, { color: theme.colors.primaryStrong }]}>Mañana</Text>
+          <Pressable
+            onPress={() => setTimeOpen(false)}
+            style={[
+              styles.timeEditorApply,
+              { backgroundColor: theme.colors.primaryStrong },
+            ]}
+          >
+            <Text style={styles.timeEditorApplyText}>Listo</Text>
           </Pressable>
         </View>
       </View>
     );
   };
 
-  const renderWeekSelector = () => (
-    <View style={styles.weekList}>
-      {getWeekOptions().map((opt) => {
-        const selected = flexWeekOffset === opt.offset;
-        return (
-          <Pressable
-            key={opt.weekKey}
-            onPress={() => setFlexWeekOffset(opt.offset)}
-            style={[
-              styles.weekOption,
-              {
-                backgroundColor: selected
-                  ? theme.colors.primarySoft
-                  : theme.colors.surfaceVariant,
-                borderWidth: 1.5,
-                borderColor: selected
+  const renderStep3 = () => (
+    <>
+      <View style={styles.segmentWrap}>
+        <Pressable
+          onPress={() => selectTemporality('puntual')}
+          style={[
+            styles.segmentOption,
+            {
+              backgroundColor:
+                temporality === 'puntual'
                   ? theme.colors.primaryStrong
-                  : 'transparent',
+                  : theme.colors.surfaceVariant,
+            },
+          ]}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={14}
+            color={
+              temporality === 'puntual'
+                ? '#FFFFFF'
+                : theme.colors.textSecondary
+            }
+          />
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.segmentText,
+              {
+                color:
+                  temporality === 'puntual'
+                    ? '#FFFFFF'
+                    : theme.colors.textSecondary,
+                fontWeight: temporality === 'puntual' ? '800' : '600',
               },
             ]}
           >
-            <Ionicons
-              name={selected ? 'radio-button-on' : 'radio-button-off'}
-              size={17}
-              color={selected ? theme.colors.primaryStrong : theme.colors.textSecondary}
-            />
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.weekOptionLabel, { color: theme.colors.textPrimary }]}>
-                {opt.label}
-              </Text>
-              <Text style={[styles.weekOptionSub, { color: theme.colors.textSecondary }]}>
-                {weekRangeFullLabel(startOfWeek(addWeeks(startOfWeek(), opt.offset)))}
-              </Text>
-            </View>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
-
-  const renderSchedule = () => (
-    <>
-      <View style={styles.fieldLabel}>
-        <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-          ¿Cuándo?
-        </Text>
+            Puntual (Fecha fija)
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => selectTemporality('periodica')}
+          style={[
+            styles.segmentOption,
+            {
+              backgroundColor:
+                temporality === 'periodica'
+                  ? theme.colors.primaryStrong
+                  : theme.colors.surfaceVariant,
+            },
+          ]}
+        >
+          <Ionicons
+            name="repeat-outline"
+            size={14}
+            color={
+              temporality === 'periodica'
+                ? '#FFFFFF'
+                : theme.colors.textSecondary
+            }
+          />
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.segmentText,
+              {
+                color:
+                  temporality === 'periodica'
+                    ? '#FFFFFF'
+                    : theme.colors.textSecondary,
+                fontWeight: temporality === 'periodica' ? '800' : '600',
+              },
+            ]}
+          >
+            Periódica (Rutina)
+          </Text>
+        </Pressable>
       </View>
 
-      <View style={styles.modeRow}>
-        {(
-          [
-            { key: 'once' as const, label: 'Por fecha concreta', icon: 'calendar-outline' as const },
-            { key: 'specific' as const, label: 'Rutina semanal', icon: 'repeat-outline' as const },
-            { key: 'flexible' as const, label: 'Flexible', icon: 'time-outline' as const },
-          ]
-        ).map((option) => {
-          const active = mode === option.key;
-          return (
+      {temporality === 'puntual' ? (
+        <>
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Fecha de la tarea
+            </Text>
+            <DurationToggle
+              mode={rangeMode}
+              onChange={setRangeMode}
+              theme={theme}
+              labels={['Un solo día', 'Varios días']}
+            />
             <Pressable
-              key={option.key}
-              onPress={() => selectMode(option.key)}
-              style={[
-                styles.modePill,
-                {
-                  backgroundColor: active
-                    ? theme.colors.primarySoft
-                    : theme.colors.surfaceVariant,
-                  borderWidth: 1.5,
-                  borderColor: active
-                    ? theme.colors.primaryStrong
-                    : 'transparent',
-                },
-              ]}
+              onPress={() => setCalOpen((v) => !v)}
+              style={[styles.dateField, { backgroundColor: theme.colors.surfaceVariant }]}
             >
               <Ionicons
-                name={option.icon}
-                size={14}
-                color={active ? theme.colors.primaryStrong : theme.colors.textSecondary}
+                name="calendar-outline"
+                size={15}
+                color={theme.colors.textSecondary}
               />
               <Text
-                numberOfLines={1}
                 style={[
-                  styles.modePillText,
+                  styles.dateFieldText,
                   {
-                    color: active
-                      ? theme.colors.primaryStrong
+                    color: dueDate
+                      ? theme.colors.textPrimary
                       : theme.colors.textSecondary,
-                    fontWeight: active ? '800' : '600',
                   },
                 ]}
               >
-                {option.label}
+                {dueDate ? `Empieza · ${formatLongDate(dueDate)}` : 'Empieza · elige una fecha'}
               </Text>
+              <Ionicons
+                name={calOpen ? 'chevron-up' : 'chevron-down'}
+                size={14}
+                color={theme.colors.textSecondary}
+              />
             </Pressable>
-          );
-        })}
-      </View>
-
-      {mode === 'once' ? (
-        <>
-          {renderCalendar()}
-          <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-            {dueDate
-              ? `Tarea puntual el ${fromDateKey(dueDate).toLocaleDateString('es-ES', {
-                  weekday: 'long',
-                  day: 'numeric',
-                  month: 'long',
-                })}.`
-              : 'Elige una fecha en el calendario.'}
-          </Text>
-          {renderTimeEditor()}
-        </>
-      ) : null}
-
-      {mode === 'flexible' ? (
-        <>
-          {renderWeekSelector()}
-          <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-            Fija la semana de inicio: la tarea solo aparecerá en ese bloque, sin
-            duplicarse en semanas futuras.
-          </Text>
-        </>
-      ) : null}
-
-      {mode === 'specific' ? (
-        <>
-          <View style={styles.daysRow}>
-            {WEEKDAY_ORDER.map((day) => {
-              const selected = days.includes(day);
-              return (
+            {calOpen ? (
+              <InlineCalendar value={dueDate} onChange={setDueDate} theme={theme} />
+            ) : null}
+            {rangeMode ? (
+              <>
                 <Pressable
-                  key={day}
-                  onPress={() => toggleDay(day)}
-                  style={[
-                    styles.dayPill,
-                    {
-                      backgroundColor: selected
-                        ? theme.colors.primaryStrong
-                        : theme.colors.surfaceVariant,
-                    },
-                  ]}
+                  onPress={() => setEndCalOpen((v) => !v)}
+                  style={[styles.dateField, { backgroundColor: theme.colors.surfaceVariant, marginTop: 8 }]}
                 >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={15}
+                    color={theme.colors.textSecondary}
+                  />
                   <Text
                     style={[
-                      styles.dayPillText,
+                      styles.dateFieldText,
                       {
-                        color: selected ? '#FFFFFF' : theme.colors.textSecondary,
-                        fontWeight: selected ? '800' : '600',
+                        color: endDate
+                          ? theme.colors.textPrimary
+                          : theme.colors.textSecondary,
                       },
                     ]}
                   >
-                    {DAY_LABELS[day]}
+                    {endDate ? `Termina · ${formatLongDate(endDate)}` : 'Termina · elige la última fecha'}
                   </Text>
+                  <Ionicons
+                    name={endCalOpen ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color={theme.colors.textSecondary}
+                  />
                 </Pressable>
-              );
-            })}
+                {endCalOpen ? (
+                  <InlineCalendar value={endDate} onChange={setEndDate} theme={theme} />
+                ) : null}
+              </>
+            ) : null}
+            <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
+              {rangeMode
+                ? endDate && endDate >= dueDate
+                  ? `Una sola tarea del ${formatLongDate(dueDate)} al ${formatLongDate(endDate)}.`
+                  : 'Elige la fecha de inicio y después la de fin.'
+                : dueDate
+                  ? `Tarea puntual el ${formatLongDate(dueDate)} (${dueDate}).`
+                  : 'Elige la fecha en el calendario.'}
+            </Text>
           </View>
 
-          <View style={styles.specificRow}>
-            <View style={styles.specificTimeWrap}>
-              {renderTimeField()}
-              {timeEditorOpen ? renderTimePanel() : null}
-            </View>
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Hora (opcional)
+            </Text>
+            {renderTimeField()}
+            {timeOpen ? renderTimePanel() : null}
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Empieza el
+            </Text>
+            <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
+              La rutina no se muestra antes de esta fecha
+            </Text>
             <Pressable
-              onPress={() => setRepeatWeekly((prev) => !prev)}
-              style={styles.repeatToggle}
+              onPress={() => setStartCalOpen((v) => !v)}
+              style={[styles.dateField, { backgroundColor: theme.colors.surfaceVariant }]}
             >
               <Ionicons
-                name={repeatWeekly ? 'checkbox' : 'square-outline'}
-                size={18}
-                color={
-                  repeatWeekly
-                    ? theme.colors.primaryStrong
-                    : theme.colors.tabInactive
-                }
+                name="calendar-outline"
+                size={15}
+                color={theme.colors.textSecondary}
               />
-              <Text style={[styles.repeatText, { color: theme.colors.textPrimary }]}>
-                Repetir todas las semanas
+              <Text
+                style={[
+                  styles.dateFieldText,
+                  {
+                    color: startDate
+                      ? theme.colors.textPrimary
+                      : theme.colors.textSecondary,
+                  },
+                ]}
+              >
+                {startDate ? formatLongDate(startDate) : 'Elige la fecha de inicio'}
               </Text>
+              <Ionicons
+                name={startCalOpen ? 'chevron-up' : 'chevron-down'}
+                size={14}
+                color={theme.colors.textSecondary}
+              />
             </Pressable>
+            {startCalOpen ? (
+              <InlineCalendar value={startDate} onChange={handleStartDateChange} theme={theme} />
+            ) : null}
           </View>
 
-          {!repeatWeekly ? (
-            <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-              Tarea puntual: solo existirá los días elegidos de esta semana.
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Duración
             </Text>
-          ) : null}
+            <DurationToggle
+              mode={rangeMode}
+              onChange={setRangeMode}
+              theme={theme}
+              labels={['Día único', 'Varios días']}
+            />
+          </View>
+
+          {rangeMode ? (
+            <View style={cardStyle}>
+              <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+                Termina el
+              </Text>
+              <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
+                Una sola tarea que cubre el rango entero, sin duplicados por día
+              </Text>
+              <Pressable
+                onPress={() => setEndCalOpen((v) => !v)}
+                style={[styles.dateField, { backgroundColor: theme.colors.surfaceVariant }]}
+              >
+                <Ionicons
+                  name="calendar-outline"
+                  size={15}
+                  color={theme.colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.dateFieldText,
+                    {
+                      color: endDate
+                        ? theme.colors.textPrimary
+                        : theme.colors.textSecondary,
+                    },
+                  ]}
+                >
+                  {endDate ? `Termina · ${formatLongDate(endDate)}` : 'Termina · elige la última fecha'}
+                </Text>
+                <Ionicons
+                  name={endCalOpen ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={theme.colors.textSecondary}
+                />
+              </Pressable>
+              {endCalOpen ? (
+                <InlineCalendar value={endDate} onChange={setEndDate} theme={theme} />
+              ) : null}
+              <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
+                {endDate && endDate >= startDate
+                  ? `El rango ${formatRangeLong(startDate, endDate)} se repite cada ${repeatIntervalDays} días.`
+                  : 'Elige la última fecha del rango.'}
+              </Text>
+            </View>
+          ) : (
+            <View style={cardStyle}>
+              <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+                Días de la rutina
+              </Text>
+            <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
+              Mostramos los días con su número de la semana en la que empieza
+            </Text>
+            <View style={styles.daysRow}>
+              {contextWeek.map(({ dow, date, label }) => {
+                const selected = days.includes(dow);
+                const pastBeforeStart = startDate
+                  ? date.getTime() < fromDateKey(startDate).getTime()
+                  : false;
+                return (
+                  <Pressable
+                    key={dow}
+                    onPress={() => toggleDay(dow)}
+                    style={[
+                      styles.dayChip,
+                      {
+                        backgroundColor: selected
+                          ? theme.colors.primaryStrong
+                          : theme.colors.surfaceVariant,
+                        opacity: pastBeforeStart && !selected ? 0.55 : 1,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.dayChipLetter,
+                        {
+                          color: selected
+                            ? '#FFFFFF'
+                            : theme.colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {DAY_LABELS[dow]}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.dayChipNum,
+                        {
+                          color: selected
+                            ? '#FFFFFF'
+                            : theme.colors.textPrimary,
+                        },
+                      ]}
+                    >
+                      {date.getDate()}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+          )}
+
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Frecuencia
+            </Text>
+            <View style={styles.periodRow}>
+              {FREQUENCY_OPTIONS.map((option) => {
+                const active =
+                  customDias.length === 0 &&
+                  repeatIntervalDays === option.dias;
+                return (
+                  <Pressable
+                    key={option.dias}
+                    onPress={() => pickFrequency(option.dias)}
+                    style={[
+                      styles.periodPill,
+                      {
+                        backgroundColor: active
+                          ? theme.colors.primaryStrong
+                          : theme.colors.surfaceVariant,
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.periodText,
+                        {
+                          color: active
+                            ? '#FFFFFF'
+                            : theme.colors.textSecondary,
+                        },
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <View style={styles.customRow}>
+              <Text
+                style={[styles.customLabel, { color: theme.colors.textSecondary }]}
+              >
+                Cada
+              </Text>
+              <View style={styles.stepperRow}>
+                <Pressable
+                  onPress={() => stepDays(-1)}
+                  hitSlop={6}
+                  style={({ pressed }) => [
+                    styles.stepperBtn,
+                    {
+                      backgroundColor: theme.colors.surfaceVariant,
+                      transform: [{ scale: pressed ? 0.9 : 1 }],
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="remove"
+                    size={18}
+                    color={theme.colors.textPrimary}
+                  />
+                </Pressable>
+                <TextInput
+                  value={customDias || String(repeatIntervalDays)}
+                  onChangeText={handleCustomDias}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  style={[
+                    styles.customInput,
+                    {
+                      backgroundColor: theme.colors.surface,
+                      borderWidth: 1.5,
+                      borderColor: theme.colors.divider,
+                      color: theme.colors.textPrimary,
+                      borderRadius: theme.radius.pill,
+                    },
+                  ]}
+                />
+                <Pressable
+                  onPress={() => stepDays(1)}
+                  hitSlop={6}
+                  style={({ pressed }) => [
+                    styles.stepperBtn,
+                    {
+                      backgroundColor: theme.colors.surfaceVariant,
+                      transform: [{ scale: pressed ? 0.9 : 1 }],
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="add"
+                    size={18}
+                    color={theme.colors.textPrimary}
+                  />
+                </Pressable>
+              </View>
+              <Text
+                style={[styles.customLabel, { color: theme.colors.textSecondary }]}
+              >
+                días
+              </Text>
+            </View>
+          </View>
+
+          <View style={cardStyle}>
+            <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+              Proyección
+            </Text>
+            {rangeMode ? (
+              <>
+                <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
+                  {startDate && endDate && endDate >= startDate
+                    ? `Rango ${formatRangeLong(startDate, endDate)} que se repite cada ${repeatIntervalDays} días desde ${formatLongDate(startDate)}.`
+                    : 'Configura fecha de inicio y fin para ver la proyección.'}
+                </Text>
+                {nextRangeStarts.length > 0 ? (
+                  <View style={styles.occRow}>
+                    {nextRangeStarts.map((d, idx) => (
+                      <View
+                        key={toDateKey(d)}
+                        style={[styles.occPill, { backgroundColor: theme.colors.surface }]}
+                      >
+                        <Text style={[styles.occText, { color: theme.colors.textPrimary }]}>
+                          Ciclo {idx + 1} · {d.getDate()}{' '}
+                          {MONTH_SHORT[d.getMonth()]}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text style={[styles.cardSubtitle, { color: theme.colors.textSecondary }]}>
+                  {startDate
+                    ? `Empieza a contar desde el ${formatLongDate(startDate)}. Nada antes.`
+                    : 'Configura la fecha de inicio para ver la proyección.'}
+                </Text>
+                {nextOccurrences.length > 0 ? (
+                  <View style={styles.occRow}>
+                    {nextOccurrences.map((d) => (
+                      <View
+                        key={toDateKey(d)}
+                        style={[styles.occPill, { backgroundColor: theme.colors.surface }]}
+                      >
+                        <Text style={[styles.occText, { color: theme.colors.textPrimary }]}>
+                          {DAY_LABELS[d.getDay() as DayOfWeek]} {d.getDate()}{' '}
+                          {MONTH_SHORT[d.getMonth()]}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </>
+            )}
+          </View>
         </>
-      ) : null}
+      )}
     </>
+  );
+
+  const renderActions = () => (
+    <View style={styles.actions}>
+      {task ? (
+        <Pressable onPress={handleDelete} hitSlop={8} style={styles.deleteButton}>
+          <Ionicons name="trash-outline" size={14} color={theme.colors.danger} />
+          <Text style={[styles.deleteText, { color: theme.colors.danger }]}>
+            Eliminar
+          </Text>
+        </Pressable>
+      ) : (
+        <View style={{ flex: 1 }} />
+      )}
+      {step > 1 ? (
+        <PillButton
+          label="Atrás"
+          variant="primary"
+          onPress={() => setStep((s) => s - 1)}
+        />
+      ) : null}
+      {step < 3 ? (
+        <PillButton
+          label="Siguiente"
+          variant="strong"
+          onPress={goNext}
+          disabled={!canAdvance}
+        />
+      ) : (
+        <PillButton
+          label={task ? 'Guardar cambios' : 'Crear tarea'}
+          variant="strong"
+          onPress={handleSubmit}
+          disabled={!canSubmit}
+        />
+      )}
+    </View>
   );
 
   return (
@@ -677,408 +1644,86 @@ export function NewTaskForm({
       title={task ? 'Editar tarea' : 'Nueva tarea'}
       subtitle={
         task
-          ? 'Puedes cambiar todo: responsabilidad, categoría, días y turnos.'
-          : 'Según la elijas, irá a Tareas del Hogar o a la Bolsa común.'
+          ? 'Título, responsable y temporalidad en tres pasos.'
+          : 'Datos, responsable y cuándo en tres pasos.'
       }
     >
-      <TextInput
-        value={title}
-        onChangeText={setTitle}
-        placeholder="Ej.: Regar las plantas"
-        placeholderTextColor={theme.colors.tabInactive}
-        autoFocus
-        returnKeyType="done"
-        style={[
-          styles.input,
-          {
-            backgroundColor: theme.colors.surfaceVariant,
-            color: theme.colors.textPrimary,
-            borderRadius: theme.radius.md,
-          },
-        ]}
-      />
-
-      <View style={styles.fieldLabel}>
-        <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-          ¿De qué tipo?
-        </Text>
-      </View>
-      <View style={styles.categoryRow}>
-        {categoryOptions.map((cat) => {
-          const selected = category === cat.key;
-          return (
-            <Pressable
-              key={cat.key}
-              onPress={() => setCategory(cat.key)}
-              style={[
-                styles.categoryPill,
-                {
-                  backgroundColor: selected
-                    ? theme.colors.infoStrong
-                    : theme.colors.surfaceVariant,
-                },
-              ]}
-            >
-              <Ionicons
-                name={cat.icon as keyof typeof Ionicons.glyphMap}
-                size={15}
-                color={selected ? '#FFFFFF' : theme.colors.textSecondary}
-              />
-              <Text
-                style={[
-                  styles.categoryText,
-                  {
-                    color: selected ? '#FFFFFF' : theme.colors.textSecondary,
-                    fontWeight: selected ? '800' : '600',
-                  },
-                ]}
-              >
-                {cat.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <View style={styles.fieldLabel}>
-        <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-          ¿Quién la hace?
-        </Text>
-      </View>
-      <View
-        style={[
-          styles.segment,
-          {
-            backgroundColor: theme.colors.surfaceVariant,
-            borderRadius: theme.radius.pill,
-          },
-        ]}
-      >
-        {(
-          [
-            { key: 'free', label: 'Libre · Bolsa' },
-            { key: 'assigned', label: 'Para alguien' },
-          ] as { key: TaskKind; label: string }[]
-        ).map((option) => {
-          const active = kind === option.key;
-          return (
-            <Pressable
-              key={option.key}
-              onPress={() => selectKind(option.key)}
-              style={[
-                styles.segmentOption,
-                active && {
-                  backgroundColor: theme.colors.surface,
-                  shadowColor: theme.shadows.soft.shadowColor,
-                  shadowOpacity: theme.shadows.soft.shadowOpacity,
-                  shadowRadius: theme.shadows.soft.shadowRadius,
-                  shadowOffset: theme.shadows.soft.shadowOffset,
-                  elevation: theme.shadows.soft.elevation,
-                },
-              ]}
-            >
-              <Text
-                style={[
-                  styles.segmentText,
-                  {
-                    color: active
-                      ? theme.colors.primaryStrong
-                      : theme.colors.textSecondary,
-                    fontWeight: active ? '800' : '500',
-                  },
-                ]}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {kind === 'assigned' ? (
-        <>
-          {!rotating ? (
-            <>
-              <View style={styles.fieldLabel}>
-                <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-                  Asignar a
-                </Text>
-              </View>
-              <View style={styles.membersRow}>
-                {members.map((member) => {
-                  const selected = assigneeId === member.id;
-                  return (
-                    <Pressable
-                      key={member.id}
-                      onPress={() => setAssigneeId(member.id)}
-                      style={[
-                        styles.memberChip,
-                        {
-                          backgroundColor: selected
-                            ? theme.colors.primaryStrong
-                            : theme.colors.surfaceVariant,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.memberChipText,
-                          {
-                            color: selected
-                              ? '#FFFFFF'
-                              : theme.colors.textSecondary,
-                          },
-                        ]}
-                      >
-                        {member.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              {renderSchedule()}
-            </>
-          ) : null}
-
-          <Pressable
-            onPress={() => setRotating((prev) => !prev)}
-            style={[
-              styles.toggleRow,
-              {
-                backgroundColor: theme.colors.surfaceVariant,
-                borderRadius: theme.radius.md,
-              },
-            ]}
-          >
-            <Ionicons
-              name="repeat"
-              size={18}
-              color={
-                rotating
-                  ? theme.colors.primaryStrong
-                  : theme.colors.tabInactive
-              }
-            />
-            <Text style={[styles.toggleText, { color: theme.colors.textPrimary }]}>
-              Tarea rotativa (por turnos)
-            </Text>
-            <Ionicons
-              name={rotating ? 'checkbox' : 'square-outline'}
-              size={20}
-              color={
-                rotating
-                  ? theme.colors.primaryStrong
-                  : theme.colors.tabInactive
-              }
-            />
-          </Pressable>
-
-          {rotating ? (
-            <>
-              <View style={styles.fieldLabel}>
-                <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-                  Rueda de turnos
-                </Text>
-              </View>
-              <View style={styles.membersRow}>
-                {wheelMembers.map((member) => {
-                  const order = turnMembers.indexOf(member.id);
-                  const selected = order !== -1;
-                  return (
-                    <Pressable
-                      key={member.id}
-                      onPress={() => toggleTurnMember(member.id)}
-                      style={[
-                        styles.memberChip,
-                        {
-                          backgroundColor: selected
-                            ? theme.colors.primaryStrong
-                            : theme.colors.surfaceVariant,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.memberChipText,
-                          {
-                            color: selected
-                              ? '#FFFFFF'
-                              : theme.colors.textSecondary,
-                          },
-                        ]}
-                      >
-                        {selected ? `${order + 1}. ${member.name}` : member.name}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-                El turno 1 (primer nombre) empieza como responsable; al
-                cumplirse el plazo la tarea rota automáticamente.
-              </Text>
-
-              <View style={styles.fieldLabel}>
-                <Text style={[styles.label, { color: theme.colors.textPrimary }]}>
-                  Frecuencia de rotación
-                </Text>
-              </View>
-              <View style={styles.periodRow}>
-                {ROTATION_FREQUENCY.map((option) => {
-                  const active =
-                    customDias.length === 0 && frecuenciaDias === option.dias;
-                  return (
-                    <Pressable
-                      key={option.dias}
-                      onPress={() => pickFrequency(option.dias)}
-                      style={[
-                        styles.periodPill,
-                        {
-                          backgroundColor: active
-                            ? theme.colors.primaryStrong
-                            : theme.colors.surfaceVariant,
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.periodText,
-                          {
-                            color: active
-                              ? '#FFFFFF'
-                              : theme.colors.textSecondary,
-                          },
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-              <View style={styles.customRow}>
-                <Text style={[styles.customLabel, { color: theme.colors.textSecondary }]}>
-                  Cada
-                </Text>
-                <TextInput
-                  value={customDias}
-                  onChangeText={handleCustomDias}
-                  placeholder="7"
-                  placeholderTextColor={theme.colors.tabInactive}
-                  keyboardType="number-pad"
-                  returnKeyType="done"
-                  style={[
-                    styles.customInput,
-                    {
-                      backgroundColor: theme.colors.surfaceVariant,
-                      color: theme.colors.textPrimary,
-                      borderWidth: 1.5,
-                      borderColor:
-                        customDias.length > 0
-                          ? theme.colors.primaryStrong
-                          : 'transparent',
-                      borderRadius: theme.radius.pill,
-                    },
-                  ]}
-                />
-                <Text style={[styles.customLabel, { color: theme.colors.textSecondary }]}>
-                  días
-                </Text>
-              </View>
-            </>
-          ) : null}
-        </>
-      ) : (
-        <>
-          <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-            Nadie lo reserva: la verás en la Bolsa común para que quien pueda la
-            tome y se lleve su sello de mérito.
-          </Text>
-          {renderSchedule()}
-        </>
-      )}
-
-      <View style={styles.actions}>
-        {task ? (
-          <Pressable
-            onPress={handleDelete}
-            hitSlop={8}
-            style={({ pressed }) => [
-              styles.deleteButton,
-              { opacity: pressed ? 0.55 : 1 },
-            ]}
-          >
-            <Ionicons
-              name="trash-outline"
-              size={14}
-              color={theme.colors.danger}
-            />
-            <Text
-              style={[styles.deleteText, { color: theme.colors.danger }]}
-            >
-              Eliminar
-            </Text>
-          </Pressable>
-        ) : (
-          <View style={{ flex: 1 }} />
-        )}
-        <PillButton label="Cancelar" variant="ghost" onPress={onClose} />
-        <PillButton
-          label={task ? 'Guardar cambios' : 'Añadir tarea'}
-          variant="strong"
-          onPress={handleSubmit}
-          disabled={!canSubmit}
-        />
-      </View>
+      {renderSteps()}
+      {step === 1 ? renderStep1() : null}
+      {step === 2 ? renderStep2() : null}
+      {step === 3 ? renderStep3() : null}
+      {renderActions()}
     </BottomSheet>
   );
 }
 
 const styles = StyleSheet.create({
+  stepsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 18,
+  },
+  stepConnector: {
+    flex: 1,
+    height: 2,
+    borderRadius: 1,
+  },
+  stepPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  stepNum: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  stepLabelText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  card: {
+    padding: 16,
+    borderRadius: 20,
+    backgroundColor: 'transparent',
+    marginBottom: 12,
+  },
+  cardTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  cardSubtitle: {
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: -6,
+    marginBottom: 10,
+  },
   input: {
-    height: 54,
-    paddingHorizontal: 18,
+    height: 52,
+    paddingHorizontal: 16,
     fontSize: 16,
     fontWeight: '600',
   },
-  fieldLabel: {
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  segment: {
-    flexDirection: 'row',
-    padding: 4,
-    gap: 4,
-  },
   categoryRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
   categoryPill: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     height: 40,
+    paddingHorizontal: 16,
     borderRadius: 999,
   },
   categoryText: {
     fontSize: 13,
-  },
-  segmentOption: {
-    flex: 1,
-    height: 44,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  segmentText: {
-    fontSize: 14,
   },
   membersRow: {
     flexDirection: 'row',
@@ -1086,15 +1731,32 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   memberChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     paddingHorizontal: 16,
     height: 42,
     borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   memberChipText: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    minHeight: 52,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  toggleText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
   },
   periodRow: {
     flexDirection: 'row',
@@ -1111,165 +1773,91 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
   },
+  stepperRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  stepperBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   customRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    marginTop: 10,
+    marginTop: 12,
   },
   customLabel: {
     fontSize: 13,
     fontWeight: '700',
   },
   customInput: {
-    width: 72,
-    height: 40,
-    paddingHorizontal: 12,
-    fontSize: 14,
+    width: 48,
+    height: 36,
+    paddingHorizontal: 6,
+    paddingVertical: 0,
+    fontSize: 15,
     fontWeight: '800',
     textAlign: 'center',
-  },
-  toggleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 16,
-    height: 50,
-    marginTop: 14,
-  },
-  toggleText: {
-    flex: 1,
-    fontSize: 14,
-    fontWeight: '700',
+    textAlignVertical: 'center',
+    overflow: 'visible',
   },
   hint: {
     fontSize: 13,
     lineHeight: 19,
-    marginTop: 8,
-    paddingRight: 16,
+    marginTop: 10,
+    paddingRight: 8,
   },
-  modeRow: {
+  segmentWrap: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 6,
+    marginBottom: 14,
   },
-  modePill: {
+  durationWrap: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  durationOption: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 40,
+    borderRadius: 999,
+  },
+  durationText: {
+    fontSize: 13,
+  },
+  segmentOption: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    height: 42,
-    paddingHorizontal: 6,
+    height: 46,
+    paddingHorizontal: 8,
     borderRadius: 999,
   },
-  modePillText: {
-    fontSize: 12,
+  segmentText: {
+    fontSize: 13,
     flexShrink: 1,
   },
-  daysRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 14,
-  },
-  dayPill: {
-    flex: 1,
-    height: 40,
-    borderRadius: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  dayPillText: {
-    fontSize: 14,
-  },
-  specificRow: {
+  dateField: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginTop: 14,
-  },
-  specificTimeWrap: {
-    flex: 1,
     gap: 8,
-  },
-  timeField: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    height: 44,
+    height: 46,
     borderRadius: 999,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
   },
-  timeFieldText: {
+  dateFieldText: {
+    flex: 1,
     fontSize: 14,
     fontWeight: '700',
-  },
-  timeEditor: {
-    borderRadius: 14,
-    padding: 14,
-    gap: 12,
-  },
-  timeStepperRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 18,
-  },
-  timeStepper: {
-    alignItems: 'center',
-    gap: 4,
-  },
-  timeStepperLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  timeStepCtl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    height: 44,
-  },
-  timeStepValue: {
-    fontSize: 24,
-    fontWeight: '800',
-    minWidth: 42,
-    textAlign: 'center',
-  },
-  timeColon: {
-    fontSize: 26,
-    fontWeight: '700',
-  },
-  timeEditorActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 8,
-  },
-  timeEditorGhost: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-  },
-  timeEditorGhostText: {
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  timeEditorApply: {
-    paddingHorizontal: 20,
-    height: 36,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  timeEditorApplyText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '800',
   },
   calBox: {
     marginTop: 12,
@@ -1300,7 +1888,7 @@ const styles = StyleSheet.create({
   },
   calCell: {
     flex: 1,
-    minHeight: 40,
+    minHeight: 38,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1325,44 +1913,147 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
-  weekList: {
+  daysRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  dayChip: {
+    flex: 1,
+    height: 54,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  dayChipLetter: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  dayChipNum: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  occRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 12,
   },
-  weekOption: {
+  occPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  occText: {
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  timeField: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: 999,
     paddingHorizontal: 14,
-    minHeight: 52,
-    borderRadius: 14,
   },
-  weekOptionLabel: {
+  timeFieldText: {
     fontSize: 14,
     fontWeight: '700',
+    flex: 1,
+    textAlign: 'center',
   },
-  weekOptionSub: {
+  timeEditor: {
+    borderRadius: 14,
+    padding: 14,
+    gap: 12,
+    marginTop: 10,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  presetPill: {
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  presetLabel: {
     fontSize: 12,
-    fontWeight: '600',
-    marginTop: 2,
+    fontWeight: '800',
   },
-  repeatToggle: {
+  presetValue: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  timeColumns: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  timeColumn: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  timeColLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  timeScroll: {
+    height: 168,
+    alignSelf: 'stretch',
+  },
+  timePill: {
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 2,
+  },
+  timePillText: {
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  timeEditorActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    flex: 1,
+    justifyContent: 'space-between',
+    gap: 8,
   },
-  repeatText: {
+  timeEditorGhost: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+  },
+  timeEditorGhostText: {
     fontSize: 13,
-    fontWeight: '600',
-    flexShrink: 1,
+    fontWeight: '700',
+  },
+  timeEditorApply: {
+    paddingHorizontal: 20,
+    height: 36,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  timeEditorApplyText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
   },
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 18,
-    marginTop: 28,
+    gap: 14,
+    marginTop: 16,
   },
   deleteButton: {
     flexDirection: 'row',

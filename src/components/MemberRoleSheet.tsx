@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { BottomSheet } from './BottomSheet';
@@ -24,12 +24,33 @@ export function MemberRoleSheet({
   onClose,
 }: MemberRoleSheetProps) {
   const { theme } = useTheme();
-  const { updateMemberRole } = useHousehold();
+  const { updateMemberRole, removeMember, activeMember, members } =
+    useHousehold();
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    if (visible) setConfirming(false);
+  }, [visible, member?.id]);
+
+  const isLeader = activeMember?.householdRole === 'leader';
+  const leaderCount = members.filter(
+    (m) => m.householdRole === 'leader',
+  ).length;
+  const canExpel =
+    isLeader &&
+    member !== null &&
+    member.id !== activeMember?.id &&
+    !(member.householdRole === 'leader' && leaderCount <= 1);
 
   const handleSelect = (role: HouseholdRole) => {
     if (member && role !== member.householdRole) {
       updateMemberRole(member.id, role);
     }
+    onClose();
+  };
+
+  const handleExpel = () => {
+    if (member) removeMember(member.id);
     onClose();
   };
 
@@ -94,6 +115,79 @@ export function MemberRoleSheet({
           </Pressable>
         );
       })}
+
+      {canExpel ? (
+        confirming ? (
+          <View
+            style={[
+              styles.confirmBox,
+              {
+                backgroundColor: theme.colors.warningSoft,
+                borderRadius: theme.radius.md,
+              },
+            ]}
+          >
+            <Text style={[styles.confirmText, { color: theme.colors.textPrimary }]}>
+              ¿Expulsar a {member?.name} del hogar?
+            </Text>
+            <View style={styles.confirmActions}>
+              <Pressable
+                onPress={() => setConfirming(false)}
+                style={({ pressed }) => [
+                  styles.confirmBtn,
+                  {
+                    backgroundColor: theme.colors.surface,
+                    borderRadius: theme.radius.pill,
+                  },
+                  pressed && { opacity: 0.8 },
+                ]}
+              >
+                <Text
+                  style={[styles.confirmBtnText, { color: theme.colors.textSecondary }]}
+                >
+                  Cancelar
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={handleExpel}
+                style={({ pressed }) => [
+                  styles.confirmBtn,
+                  {
+                    backgroundColor: theme.colors.danger,
+                    borderRadius: theme.radius.pill,
+                  },
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>
+                  Expulsar
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setConfirming(true)}
+            style={({ pressed }) => [
+              styles.expelRow,
+              {
+                backgroundColor: theme.colors.surfaceVariant,
+                borderRadius: theme.radius.md,
+              },
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Ionicons
+              name="person-remove-outline"
+              size={18}
+              color={theme.colors.danger}
+            />
+            <Text style={[styles.expelText, { color: theme.colors.danger }]}>
+              Expulsar del hogar
+            </Text>
+          </Pressable>
+        )
+      ) : null}
     </BottomSheet>
   );
 }
@@ -135,5 +229,40 @@ const styles = StyleSheet.create({
   optionHint: {
     fontSize: 12,
     fontWeight: '500',
+  },
+  expelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+    marginTop: 4,
+  },
+  expelText: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  confirmBox: {
+    padding: 14,
+    marginTop: 4,
+    gap: 12,
+  },
+  confirmText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  confirmBtn: {
+    paddingHorizontal: 18,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmBtnText: {
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
