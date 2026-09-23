@@ -51,7 +51,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
   } = useHousehold();
   const { tasksSnapshot, replaceTasksState } = useTasks();
   const { shoppingSnapshot, replaceShoppingState } = useCompras();
-  const { joinRequested } = useHousehold();
 
   const [meta, setMeta] = useState<SyncMeta>({ homeId: '', updatedAt: 0 });
   const [ready, setReady] = useState(false);
@@ -70,9 +69,6 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   const deviceMemberIdRef = useRef(deviceMemberId);
   deviceMemberIdRef.current = deviceMemberId;
-
-  const joinRequestedRef = useRef(joinRequested);
-  joinRequestedRef.current = joinRequested;
 
   const dataRef = useRef({
     house: houseSnapshot,
@@ -119,14 +115,28 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ready || !syncEnabled || !homeId) return;
-    if (metaRef.current.homeId !== homeId) {
-      const updatedAt = joinRequestedRef.current ? 0 : Date.now();
-      const next = { homeId, updatedAt };
+    if (metaRef.current.homeId === homeId) return;
+    let cancelled = false;
+    (async () => {
+      let remoteExists = false;
+      try {
+        remoteExists = (await fetchDoc(homeId)) !== null;
+      } catch {
+        remoteExists = false;
+      }
+      if (cancelled) return;
+      const next = {
+        homeId,
+        updatedAt: remoteExists ? 0 : Date.now(),
+      };
       lastAppliedRef.current = 0;
       setMeta(next);
       AsyncStorage.setItem(META_KEY, JSON.stringify(next)).catch(() => {});
-    }
-  }, [homeId, ready]);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [homeId, ready, syncEnabled]);
 
   useEffect(() => {
     if (!ready || !syncEnabled) return;
