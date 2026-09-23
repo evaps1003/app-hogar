@@ -68,6 +68,10 @@ export function AjustesScreen() {
     (member) => member.householdRole !== 'leader',
   ).length;
 
+  const misNotas = notices.filter(
+    (notice) => notice.createdBy === activeMember?.id,
+  );
+
   const openRename = () => {
     setNameDraft(householdName);
     setRenameVisible(true);
@@ -225,18 +229,19 @@ export function AjustesScreen() {
           <Text style={styles.noticeAddBtnText}>Nueva nota</Text>
         </Pressable>
 
-        {notices.length === 0 ? (
+        {misNotas.length === 0 ? (
           <Text
             style={[
               styles.readOnlyHint,
               { color: theme.colors.textSecondary },
             ]}
           >
-            Sin notas todavía. Añade citas de técnicos, paquetería esperada,
-            franjas de silencio o notas rápidas para el hogar.
+            Todavía no has añadido ninguna nota. Añade citas de técnicos,
+            paquetería esperada, franjas de silencio o notas rápidas para el
+            hogar.
           </Text>
         ) : (
-          notices.map((notice) => {
+          misNotas.map((notice) => {
             const author = getMemberById(notice.createdBy);
             return (
               <View key={notice.id} style={styles.noticeRow}>

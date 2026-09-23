@@ -76,8 +76,13 @@ export function HoyScreen() {
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
 
   const noticesActive = useMemo(
-    () => notices.filter((notice) => !isNoticeExpired(notice)),
-    [notices],
+    () =>
+      notices.filter(
+        (notice) =>
+          !isNoticeExpired(notice) &&
+          notice.createdBy !== activeMember?.id,
+      ),
+    [notices, activeMember],
   );
 
   const renderAvisos = () => {

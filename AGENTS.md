@@ -48,8 +48,8 @@ App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, T
 ## Reglas de negocio
 - Identidad por dispositivo: `assignDeviceMember` fija `my_device_member_id` y `activeMemberId`; reasignable desde Ajustes (chip "Eres tú" solo visual). `createHousehold` crea hogar + primer miembro (rol Líder) + identidad del dispositivo en un solo paso. Las tareas en instalaciones nuevas arrancan vacías (sin miembros de prueba).
 - Supervisado no crea tareas (FAB oculto + guard en `addTask`); `canCheckTask` solo si es libre o `assigneeId === activeMember.id`. Roles editables solo por Líder/Co-admin (`MemberRoleSheet`).
-- Hoy es vista personal: `dueOn(day)` filtra `assigneeId === activeMember.id`; bolsa común global; avisos vigentes del Tablón en pastillas amarillas (`highlightSoft`, `📌 Aviso:`).
-- Tablón del hogar en Ajustes: `addNotice/updateNotice/deleteNotice`, purge de caducados cada 30 s; solo el Líder gestiona miembros y renombra el hogar.
+- Hoy es vista personal: `dueOn(day)` filtra `assigneeId === activeMember.id`; bolsa común global; **avisos de los demás** del Tablón en pastillas amarillas (`highlightSoft`, `📌 Aviso:`). Tus propios avisos NO se muestran en Hoy (solo en el Tablón de Ajustes, donde puedes editarlos/borrarlos).
+- Tablón del hogar en Ajustes: `addNotice/updateNotice/deleteNotice`, purge de caducados cada 30 s; **el tablón de Ajustes muestra SOLO tus notas** (`createdBy === activeMember.id`) con editar/borrar — los avisos de los demás viven en Hoy. Solo el Líder gestiona miembros y renombra el hogar.
 - Ciclos de turnos: `applyCycleMaintenance` rota al cargar si `now >= proximaRotacion`; test manual "Avanzar turnos" (panel dev).
 
 ## Sincronización entre dispositivos (Supabase)
