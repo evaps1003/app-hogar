@@ -1,2 +1,3 @@
-export const SUPABASE_URL = '';
-export const SUPABASE_ANON_KEY = '';
+export const SUPABASE_URL = 'https://mnnbohpcuaqthzievxid.supabase.co/rest/v1';
+export const SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ubmJvaHBjdWFxdGh6aWV2eGlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAxNTc3MjcsImV4cCI6MjEwNTczMzcyN30.Q49JdsC4hCN_-N16e-vnaMJdHhC13ZA30NjZrOEh-_Q';
