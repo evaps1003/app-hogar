@@ -46,6 +46,7 @@ export function AjustesScreen() {
     addNotice,
     updateNotice,
     deleteNotice,
+    addMember,
   } = useHousehold();
   const devTools = useDevTools();
   const { enabled, taps, tap } = devTools;
@@ -56,8 +57,16 @@ export function AjustesScreen() {
   const [nameDraft, setNameDraft] = useState('');
   const [noticeSheetOpen, setNoticeSheetOpen] = useState(false);
   const [editingNotice, setEditingNotice] = useState<HouseNotice | null>(null);
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [newMemberName, setNewMemberName] = useState('');
+  const [newMemberRole, setNewMemberRole] =
+    useState<HouseholdRole>('supervised');
 
   const isLeader = activeMember?.householdRole === 'leader';
+
+  const claimableCount = members.filter(
+    (member) => member.householdRole !== 'leader',
+  ).length;
 
   const openRename = () => {
     setNameDraft(householdName);
@@ -91,14 +100,30 @@ export function AjustesScreen() {
       setToast('Aviso actualizado');
     } else {
       addNotice(input);
-      setToast('Aviso añadido al tablón');
+      const short =
+        input.text.length > 56 ? input.text.slice(0, 53) + '…' : input.text;
+      setToast(`📌 Aviso añadido: ${short}`);
     }
     closeNoticeSheet();
+  };
+
+  const handleAddMember = () => {
+    const name = newMemberName.trim();
+    if (!name) return;
+    const created = addMember({ name, householdRole: newMemberRole });
+    if (!created) return;
+    setNewMemberName('');
+    setAddMemberOpen(false);
+    setToast(`Miembro añadido: ${created.name}`);
   };
 
   const handleInvite = async () => {
     if (!homeId || members.length === 0) {
       setToast('Este dispositivo aún no tiene hogar asignado');
+      return;
+    }
+    if (claimableCount === 0) {
+      setToast('Primero añade los perfiles del hogar y después invita');
       return;
     }
     const url = buildInviteUrl({ homeId, householdName, members });
@@ -383,26 +408,61 @@ export function AjustesScreen() {
         })}
 
         {isLeader ? (
-          <Pressable
-            onPress={() => void handleInvite()}
-            style={({ pressed }) => [
-              styles.invitePill,
-              {
-                backgroundColor: theme.colors.surfaceVariant,
-                borderRadius: theme.radius.md,
-              },
-              pressed && { opacity: 0.8 },
-            ]}
-          >
-            <Ionicons
-              name="link"
-              size={18}
-              color={theme.colors.primaryStrong}
-            />
-            <Text style={[styles.inviteText, { color: theme.colors.primaryStrong }]}>
-              Invitar al hogar
-            </Text>
-          </Pressable>
+          <>
+            <Pressable
+              onPress={() => setAddMemberOpen(true)}
+              style={({ pressed }) => [
+                styles.invitePill,
+                {
+                  backgroundColor: theme.colors.primarySoft,
+                  borderRadius: theme.radius.md,
+                },
+                pressed && { opacity: 0.8 },
+              ]}
+            >
+              <Ionicons
+                name="person-add"
+                size={18}
+                color={theme.colors.primaryStrong}
+              />
+              <Text
+                style={[styles.inviteText, { color: theme.colors.primaryStrong }]}
+              >
+                Añadir miembro del hogar
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void handleInvite()}
+              style={({ pressed }) => [
+                styles.invitePill,
+                {
+                  backgroundColor: theme.colors.surfaceVariant,
+                  borderRadius: theme.radius.md,
+                },
+                pressed && { opacity: 0.8 },
+              ]}
+            >
+              <Ionicons
+                name="link"
+                size={18}
+                color={theme.colors.primaryStrong}
+              />
+              <Text style={[styles.inviteText, { color: theme.colors.primaryStrong }]}>
+                Invitar al hogar
+              </Text>
+            </Pressable>
+            {claimableCount === 0 ? (
+              <Text
+                style={[
+                  styles.readOnlyHint,
+                  { color: theme.colors.textSecondary },
+                ]}
+              >
+                El invitado solo podrá elegir su perfil entre los que añadas
+                aquí. Añade primero a las personas y después invítalas.
+              </Text>
+            ) : null}
+          </>
         ) : (
           <Text style={[styles.readOnlyHint, { color: theme.colors.textSecondary }]}>
             Solo el Líder del hogar puede cambiar roles, expulsar miembros o
@@ -479,6 +539,76 @@ export function AjustesScreen() {
           ]}
         />
         <PillButton label="Guardar nombre" variant="strong" onPress={handleRename} />
+      </BottomSheet>
+
+      <BottomSheet
+        visible={addMemberOpen}
+        onClose={() => setAddMemberOpen(false)}
+        title="Añadir miembro"
+        subtitle="Crea el perfil de cada persona del hogar. Ellos elegirán cuál es el suyo al abrir la invitación."
+      >
+        <TextInput
+          value={newMemberName}
+          onChangeText={setNewMemberName}
+          placeholder="Nombre (ej. Mamá)"
+          placeholderTextColor={theme.colors.tabInactive}
+          returnKeyType="done"
+          autoFocus
+          onSubmitEditing={handleAddMember}
+          style={[
+            styles.addInput,
+            {
+              backgroundColor: theme.colors.surfaceVariant,
+              color: theme.colors.textPrimary,
+              borderRadius: theme.radius.pill,
+              paddingHorizontal: 16,
+              marginBottom: 18,
+            },
+          ]}
+        />
+        <View style={styles.roleRow}>
+          {(['coadmin', 'supervised'] as HouseholdRole[]).map((option) => {
+            const active = newMemberRole === option;
+            return (
+              <Pressable
+                key={option}
+                onPress={() => setNewMemberRole(option)}
+                style={[
+                  styles.roleChip,
+                  {
+                    backgroundColor: active
+                      ? theme.colors.primarySoft
+                      : theme.colors.surfaceVariant,
+                    borderWidth: 1.5,
+                    borderColor: active
+                      ? theme.colors.primaryStrong
+                      : 'transparent',
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.roleChipText,
+                    {
+                      color: active
+                        ? theme.colors.primaryStrong
+                        : theme.colors.textSecondary,
+                      fontWeight: active ? '800' : '600',
+                    },
+                  ]}
+                >
+                  {ROLE_LABELS[option]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <PillButton
+          label="Añadir al hogar"
+          variant="strong"
+          disabled={!newMemberName.trim()}
+          onPress={handleAddMember}
+        />
       </BottomSheet>
     </Screen>
   );
@@ -619,6 +749,19 @@ const styles = StyleSheet.create({
     height: 44,
     fontSize: 14,
     fontWeight: '600',
+  },
+  roleRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 22,
+  },
+  roleChip: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 999,
+  },
+  roleChipText: {
+    fontSize: 13,
   },
   paletteRow: {
     flexDirection: 'row',

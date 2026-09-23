@@ -11,7 +11,6 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../theme';
 import { MemberAvatar } from './MemberAvatar';
-import { BottomSheet } from './BottomSheet';
 import { PillButton } from './PillButton';
 import { useHousehold } from '../data/HouseholdContext';
 import { HouseholdRole, MemberColor } from '../data/types';
@@ -21,8 +20,6 @@ const ROLE_LABELS: Record<HouseholdRole, string> = {
   coadmin: 'Co-admin',
   supervised: 'Supervisado',
 };
-
-const ROLE_OPTIONS: HouseholdRole[] = ['leader', 'coadmin', 'supervised'];
 
 const COLOR_CHOICES: { color: MemberColor; label: string }[] = [
   { color: 'primary', label: 'Rosa' },
@@ -40,30 +37,21 @@ export function WelcomeScreen({ mode, onDone }: WelcomeScreenProps) {
   const {
     members,
     householdName,
-    addMember,
     assignDeviceMember,
     createHousehold,
   } = useHousehold();
-  const [addOpen, setAddOpen] = useState(false);
-  const [name, setName] = useState('');
-  const [role, setRole] = useState<HouseholdRole>('supervised');
   const [homeName, setHomeName] = useState('');
   const [myName, setMyName] = useState('');
   const [myColor, setMyColor] = useState<MemberColor>('primary');
 
   const isCreate = mode === 'create';
 
+  const claimableMembers = members.filter(
+    (member) => member.householdRole !== 'leader',
+  );
+
   const choose = (id: string) => {
     assignDeviceMember(id);
-    onDone();
-  };
-
-  const createMember = () => {
-    const created = addMember({ name, householdRole: role });
-    if (!created) return;
-    setName('');
-    setAddOpen(false);
-    assignDeviceMember(created.id);
     onDone();
   };
 
@@ -99,7 +87,7 @@ export function WelcomeScreen({ mode, onDone }: WelcomeScreenProps) {
           <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
             {isCreate
               ? 'Nombra vuestra casa y crea tu perfil. La primera persona que entre será el Líder del hogar.'
-              : `Te estás uniendo a ${householdName}. Este móvil quedará vinculado a tu perfil: tareas, avisos, gastos y compras se asignarán a tu miembro.`}
+              : `Te estás uniendo a ${householdName}. El Líder crea los perfiles de cada persona; elige el tuyo.`}
           </Text>
         </View>
 
@@ -222,6 +210,28 @@ export function WelcomeScreen({ mode, onDone }: WelcomeScreenProps) {
               Después podrás invitar a más personas desde Ajustes.
             </Text>
           </View>
+        ) : claimableMembers.length === 0 ? (
+          <View
+            style={[
+              styles.emptyCard,
+              {
+                backgroundColor: theme.colors.surfaceVariant,
+                borderRadius: theme.radius.lg,
+              },
+            ]}
+          >
+            <Text
+              style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}
+            >
+              Aún no tienes perfil en {householdName}
+            </Text>
+            <Text
+              style={[styles.emptyBody, { color: theme.colors.textSecondary }]}
+            >
+              El Líder añade el perfil de cada persona desde Ajustes. Pídele que
+              cree el tuyo y que te reenvíe la invitación.
+            </Text>
+          </View>
         ) : (
           <>
             <Text
@@ -230,10 +240,10 @@ export function WelcomeScreen({ mode, onDone }: WelcomeScreenProps) {
                 { color: theme.colors.textSecondary },
               ]}
             >
-              ¿Quién usa este móvil?
+              ¿Quién eres? Elige tu perfil
             </Text>
 
-            {members.map((member) => (
+            {claimableMembers.map((member) => (
               <Pressable
                 key={member.id}
                 onPress={() => choose(member.id)}
@@ -288,110 +298,13 @@ export function WelcomeScreen({ mode, onDone }: WelcomeScreenProps) {
               </Pressable>
             ))}
 
-            <Pressable
-              onPress={() => setAddOpen(true)}
-              style={({ pressed }) => [
-                styles.addRow,
-                {
-                  backgroundColor: theme.colors.surfaceVariant,
-                  borderRadius: theme.radius.lg,
-                },
-                pressed && { opacity: 0.85 },
-              ]}
-            >
-              <View
-                style={[
-                  styles.addIcon,
-                  { backgroundColor: theme.colors.primaryStrong },
-                ]}
-              >
-                <Ionicons name="add" size={22} color="#FFFFFF" />
-              </View>
-              <Text
-                style={[styles.addText, { color: theme.colors.primaryStrong }]}
-              >
-                + Añadir nuevo miembro
-              </Text>
-            </Pressable>
-
             <Text style={[styles.hint, { color: theme.colors.textSecondary }]}>
-              Puedes cambiar de perfil desde Ajustes en cualquier momento.
+              Tu perfil siempre será este en este móvil. Cambia el móvil que lo
+              usa desde Ajustes.
             </Text>
           </>
         )}
       </ScrollView>
-
-      <BottomSheet
-        visible={addOpen}
-        onClose={() => setAddOpen(false)}
-        title="Nuevo miembro"
-        subtitle="La persona que usará este móvil. Recibirá un color pastel propio."
-      >
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Nombre (ej. Mamá)"
-          placeholderTextColor={theme.colors.tabInactive}
-          returnKeyType="done"
-          autoFocus
-          onSubmitEditing={createMember}
-          style={[
-            styles.addInput,
-            {
-              backgroundColor: theme.colors.surfaceVariant,
-              color: theme.colors.textPrimary,
-              borderRadius: theme.radius.pill,
-            },
-          ]}
-        />
-        <Text style={[styles.fieldLabel, { color: theme.colors.textSecondary }]}>
-          ¿Qué rol tendrá?
-        </Text>
-        <View style={styles.roleRow}>
-          {ROLE_OPTIONS.map((option) => {
-            const active = role === option;
-            return (
-              <Pressable
-                key={option}
-                onPress={() => setRole(option)}
-                style={[
-                  styles.roleChip,
-                  {
-                    backgroundColor: active
-                      ? theme.colors.primarySoft
-                      : theme.colors.surfaceVariant,
-                    borderRadius: theme.radius.pill,
-                    borderWidth: 1.5,
-                    borderColor: active
-                      ? theme.colors.primaryStrong
-                      : 'transparent',
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.roleChipText,
-                    {
-                      color: active
-                        ? theme.colors.primaryStrong
-                        : theme.colors.textSecondary,
-                      fontWeight: active ? '800' : '600',
-                    },
-                  ]}
-                >
-                  {ROLE_LABELS[option]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-        <PillButton
-          label="Crear perfil y entrar"
-          variant="strong"
-          disabled={!name.trim()}
-          onPress={createMember}
-        />
-      </BottomSheet>
     </SafeAreaView>
   );
 }
@@ -501,49 +414,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  addRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    marginTop: 4,
-  },
-  addIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 999,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  addText: {
-    fontSize: 15,
-    fontWeight: '800',
-  },
   hint: {
     fontSize: 12,
     fontWeight: '600',
     textAlign: 'center',
     marginTop: 18,
   },
-  addInput: {
-    height: 46,
-    fontSize: 14,
-    fontWeight: '600',
-    paddingHorizontal: 16,
-    marginBottom: 18,
+  emptyCard: {
+    paddingVertical: 26,
+    paddingHorizontal: 20,
+    alignItems: 'center',
   },
-  roleRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 10,
-    marginBottom: 22,
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
   },
-  roleChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  roleChipText: {
+  emptyBody: {
     fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 19,
   },
 });

@@ -154,11 +154,23 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.setItem(META_KEY, JSON.stringify(next)).catch(() => {});
   }, []);
 
-  const buildDoc = useCallback((): SyncDoc | null => {
+  const buildDoc = useCallback((remote?: SyncDoc | null): SyncDoc | null => {
     const current = dataRef.current;
     if (!current.house || !current.tasks || !current.shopping) return null;
+    let notices = current.house.notices ?? [];
+    if (remote?.house && Array.isArray(remote.house.notices)) {
+      const seen = new Set(notices.map((notice) => notice.id));
+      const merged = [...notices];
+      remote.house.notices.forEach((notice) => {
+        if (!seen.has(notice.id)) {
+          seen.add(notice.id);
+          merged.push(notice);
+        }
+      });
+      notices = merged;
+    }
     return {
-      house: current.house,
+      house: { ...current.house, notices },
       tasks: current.tasks,
       shopping: current.shopping,
       updatedAt: metaRef.current.updatedAt,
@@ -203,7 +215,7 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     }
     if (localAt > remote.updatedAt) {
       if (localAt > lastAppliedRef.current && localDoc) {
-        const ok = await pushDoc(hid, localDoc);
+        const ok = await pushDoc(hid, buildDoc(remote)!);
         if (ok) setLastSyncAt(Date.now());
       }
       return;
@@ -242,9 +254,16 @@ export function SyncProvider({ children }: { children: React.ReactNode }) {
     if (!current.homeId) return;
     if (current.updatedAt <= lastAppliedRef.current) return;
     const timer = setTimeout(async () => {
-      const doc = buildDoc();
-      if (!doc) return;
-      const ok = await pushDoc(current.homeId, doc);
+      const localDoc = buildDoc();
+      if (!localDoc) return;
+      let remote: SyncDoc | null = null;
+      try {
+        remote = await fetchDoc(current.homeId);
+      } catch {
+        remote = null;
+      }
+      const doc = remote ? buildDoc(remote) : localDoc;
+      const ok = await pushDoc(current.homeId, doc!);
       if (ok) {
         setLastSyncAt(Date.now());
         persistMeta(current);
