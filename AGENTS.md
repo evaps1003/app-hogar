@@ -12,8 +12,8 @@ Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before 
 App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, TypeScript strict). Código en la carpeta `app-movil`. También se exporta a web (PWA) para GitHub Pages.
 
 ## Repositorio
-- GitHub: `https://github.com/evaps1003/app-hogar` (PRIVADO, rama `main`).
-- No usar `gh` (no instalado); para push se autentica con token PAT clásico (usuario `evaps1003`) o credenciales Basic. El token usado en el setup quedó expuesto y debe revocarse en GitHub → Developer settings.
+- GitHub: `https://github.com/evaps1003/app-hogar` (PÚBLICO, rama `main`). GitHub Pages activado desde la rama `gh-pages`; URL en vivo: `https://evaps1003.github.io/app-hogar/`.
+- No usar `gh` (no instalado); el push autentica sin prompt (credenciales en Windows Credential Manager): `$env:GIT_TERMINAL_PROMPT='0'; git push origin main`.
 
 ## Comandos
 - Windows PowerShell: usar `npm.cmd` / `npx.cmd` (npm.ps1 está bloqueado). El `.npmrc` global fija `allow-scripts=opencode-ai`; si `expo install` falla con `EALLOWSCRIPTS`, instalar a mano con `npm.cmd install <pkg> --save`.
@@ -23,7 +23,7 @@ App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, T
 
 ## Arquitectura
 - Navegación: bottom-tabs flotante (Hoy, Tareas, Compras, Ajustes) en `src/navigation/RootNavigator.tsx`.
-- Estado (AsyncStorage): `hogar.household.v1` (`HouseholdContext`: miembros + rol + miembro activo + `homeId` + avisos), `hogar.tasks.v2` (`TaskContext`), `hogar.shopping.v1` (`ComprasContext`), `hogar.devTools.v1`, `my_device_member_id` (identidad por dispositivo).
+- Estado (AsyncStorage): `hogar.household.v1` (`HouseholdContext`: miembros + rol + miembro activo + `homeId` + avisos), `hogar.tasks.v2` (`TaskContext`), `hogar.shopping.v1` (`ComprasContext`), `hogar.devTools.v1`, `hogar.sync.v1` (meta de sincronización), `my_device_member_id` (identidad por dispositivo).
 - `AppShell` (en `App.tsx`) bloquea la app hasta cargar y muestra `WelcomeScreen` en dos modos hasta fijar `my_device_member_id`: **crear** (sin hogar guardado ni enlace de invitación → "Crear mi hogar": nombre, "¿Cómo te llamas?" + color pastel, `[Comenzar]`, crea hogar nuevo y el primer miembro es Líder) o **unirse** (llegó por enlace de invitación o el hogar ya existe → "¿Quién eres?" con lista de miembros + alta). **No hay seed**: instalaciones nuevas no crean miembros/tareas de prueba (Laura/Papá/Hermano ya no existen; los usos que ya tengan datos en `hogar.*` se conservan).
 - Invitación: `buildInviteUrl({ homeId, householdName, members })` empaqueta el estado del hogar en `?invite=<base64/json>`; al unirse, `readJoinContext()` lo decodifica y adopta ese hogar (nombre + miembros) aunque el dispositivo esté vacío. `?join_home=<id>` se mantiene como compatibilidad.
 - Tema pastel: `src/theme/` (palettes, tokens, useTheme). Tokens: radius (`sm 12, md 16, lg 24, xl 32, pill 999`), colores por miembro (`primary/highlight/accent` + `*Soft`/`*Strong`).
@@ -51,6 +51,14 @@ App colaborativa del hogar en Expo (SDK 57, React Native 0.86.3, React 19.2.3, T
 - Hoy es vista personal: `dueOn(day)` filtra `assigneeId === activeMember.id`; bolsa común global; avisos vigentes del Tablón en pastillas amarillas (`highlightSoft`, `📌 Aviso:`).
 - Tablón del hogar en Ajustes: `addNotice/updateNotice/deleteNotice`, purge de caducados cada 30 s; solo el Líder gestiona miembros y renombra el hogar.
 - Ciclos de turnos: `applyCycleMaintenance` rota al cargar si `now >= proximaRotacion`; test manual "Avanzar turnos" (panel dev).
+
+## Sincronización entre dispositivos (Supabase)
+- Objetivo: compartir hogar/tareas/compras/avisos entre móviles. Rellenar `src/data/syncConfig.ts` (`SUPABASE_URL` + `SUPABASE_ANON_KEY`); con ambos vacíos la sync queda deshabilitada y la app sigue 100% local (no hacer fetch ni push).
+- Cliente REST propio en `src/data/supabase.ts` con `fetch` (NO instalar `@supabase/supabase-js`: su `realtime-js`/`ws` hace fallar el bundle de Metro con `UnableToResolveError: stream`). `SUPABASE_URL` debe ser la URL REST completa de Supabase: `https://<ref>.supabase.co/rest/v1`.
+- Tabla: `homes(home_id text primary key, data jsonb not null)` + RLS abierto a anon (SELECT/INSERT/UPDATE/DELETE con `using (true)`).
+- `SyncContext.tsx` (`SyncProvider` dentro de `ComprasProvider`, antes de `DevToolsProvider`): poll 4 s, push en debounce 700 ms, last-writer-wins por `updatedAt` (meta local `hogar.sync.v1`), guard `applyingRef` contra bucles de eco; al aplicar el estado remoto se conserva `my_device_member_id` como `activeMemberId` si el miembro existe. En dispositivo que llega por invitación, la meta inicial es 0 (prioriza la nube sobre el snapshot del enlace).
+- Los tres contextos exponen snapshot/replace: `houseSnapshot`/`replaceHouseState` (`HouseholdContext`), `tasksSnapshot`/`replaceTasksState` (`TaskContext`), `shoppingSnapshot`/`replaceShoppingState` (`ComprasContext`). La carga de Compras ya NO depende de `members` (evita pisar datos sincizados con un reload).
+- Indicador en el pie de Ajustes: "☁️ Datos sincronizados con el hogar" / "☁️ Sincronización sin configurar".
 
 ## Estructura
 - `src/screens/`: HoyScreen (tira de días + tarjetas ✨), TareasScreen (Reparto + Bolsa), ComprasScreen (listas, donut, gastos), AjustesScreen (apariencia, Tablón, miembros/roles, invitación, panel dev oculto + pie de versión). `src/components/WelcomeScreen` ("¿Quién eres?").

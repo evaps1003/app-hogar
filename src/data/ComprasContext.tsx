@@ -106,6 +106,8 @@ interface ComprasContextValue {
   categories: ShoppingCategoryConfig[];
   expenseCategories: ExpenseCategoryConfig[];
   ready: boolean;
+  shoppingSnapshot: ShoppingStorage | null;
+  replaceShoppingState: (next: ShoppingStorage) => void;
   createList: (input: NewListInput) => ShoppingList | undefined;
   updateList: (listId: string, input: NewListInput) => void;
   deleteList: (listId: string) => void;
@@ -381,7 +383,7 @@ export function ComprasProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [members]);
+  }, []);
 
   useEffect(() => {
     if (!state || firstRender.current) {
@@ -840,6 +842,8 @@ export function ComprasProvider({ children }: { children: React.ReactNode }) {
       expenseCategories:
         state?.expenseCategories ?? DEFAULT_EXPENSE_CATEGORIES,
       ready,
+      shoppingSnapshot: state,
+      replaceShoppingState: setState,
       createList,
       updateList,
       deleteList,

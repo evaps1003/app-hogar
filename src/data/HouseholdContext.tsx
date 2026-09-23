@@ -38,6 +38,8 @@ interface HouseholdContextValue {
   categories: string[];
   householdName: string;
   notices: HouseNotice[];
+  houseSnapshot: HouseData | null;
+  replaceHouseState: (next: HouseData) => void;
   homeId: string;
   joinRequested: boolean;
   deviceMemberId: string | null;
@@ -424,6 +426,8 @@ export function HouseholdProvider({ children }: { children: React.ReactNode }) {
       categories: Array.isArray(state?.categories) ? state!.categories : [],
       householdName: state?.householdName ?? 'Mi hogar',
       notices: state?.notices ?? [],
+      houseSnapshot: state,
+      replaceHouseState: setState,
       homeId: state?.homeId ?? '',
       joinRequested,
       deviceMemberId,

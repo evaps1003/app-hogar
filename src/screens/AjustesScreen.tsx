@@ -20,6 +20,7 @@ import { PillButton } from '../components/PillButton';
 import { DevToolsPanel } from '../components/DevToolsPanel';
 import { useHousehold } from '../data/HouseholdContext';
 import { useDevTools } from '../data/DevToolsContext';
+import { useSync } from '../data/SyncContext';
 import { noticeExpiryLabel } from '../data/notices';
 import { buildInviteUrl } from '../data/webLink';
 import { HouseholdRole, HouseNotice, Member, NoticeInput } from '../data/types';
@@ -48,6 +49,7 @@ export function AjustesScreen() {
   } = useHousehold();
   const devTools = useDevTools();
   const { enabled, taps, tap } = devTools;
+  const { syncEnabled } = useSync();
   const [roleTarget, setRoleTarget] = useState<Member | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [renameVisible, setRenameVisible] = useState(false);
@@ -412,6 +414,13 @@ export function AjustesScreen() {
       {enabled ? <DevToolsPanel onToast={setToast} /> : null}
 
       <View style={styles.footer}>
+        <Text
+          style={[styles.versionHint, { color: theme.colors.tabInactive }]}
+        >
+          {syncEnabled
+            ? '☁️ Datos sincronizados con el hogar'
+            : '☁️ Sincronización sin configurar'}
+        </Text>
         <Pressable
           onPress={tap}
           hitSlop={12}

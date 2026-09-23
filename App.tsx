@@ -11,6 +11,7 @@ import {
 } from './src/data/HouseholdContext';
 import { ComprasProvider } from './src/data/ComprasContext';
 import { TasksProvider } from './src/data/TaskContext';
+import { SyncProvider } from './src/data/SyncContext';
 import { DevToolsProvider } from './src/data/DevToolsContext';
 import { WelcomeScreen } from './src/components/WelcomeScreen';
 import { RootNavigator } from './src/navigation/RootNavigator';
@@ -72,9 +73,11 @@ export default function App() {
           <HouseholdProvider>
             <TasksProvider>
               <ComprasProvider>
-                <DevToolsProvider>
-                  <AppShell />
-                </DevToolsProvider>
+                <SyncProvider>
+                  <DevToolsProvider>
+                    <AppShell />
+                  </DevToolsProvider>
+                </SyncProvider>
               </ComprasProvider>
             </TasksProvider>
           </HouseholdProvider>

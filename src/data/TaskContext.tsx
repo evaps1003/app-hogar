@@ -35,6 +35,8 @@ interface TaskActionBase {
 interface TasksContextValue {
   tasks: Task[];
   ready: boolean;
+  tasksSnapshot: TasksStorage | null;
+  replaceTasksState: (next: TasksStorage) => void;
   addTask: (input: TaskActionBase) => Task | undefined;
   toggleAssigned: (taskId: string) => void;
   claimFreeTask: (taskId: string) => void;
@@ -541,6 +543,8 @@ export function TasksProvider({ children }: { children: React.ReactNode }) {
     return {
       tasks,
       ready,
+      tasksSnapshot: state,
+      replaceTasksState: setState,
       addTask,
       toggleAssigned,
       claimFreeTask,
