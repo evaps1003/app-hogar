@@ -304,6 +304,7 @@ export function NewTaskForm({
   const [startCalOpen, setStartCalOpen] = useState(false);
   const [endCalOpen, setEndCalOpen] = useState(false);
   const [timeOpen, setTimeOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [rangeMode, setRangeMode] = useState(false);
   const [endDate, setEndDate] = useState('');
 
@@ -577,21 +578,14 @@ export function NewTaskForm({
 
   const handleDelete = () => {
     if (!task) return;
-    Alert.alert(
-      'Eliminar tarea',
-      `¿Seguro que quieres eliminar «${task.title}»? Esta acción no se puede deshacer.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: () => {
-            deleteTask(task.id);
-            onClose();
-          },
-        },
-      ],
-    );
+    setConfirmingDelete(true);
+  };
+
+  const confirmDelete = () => {
+    if (!task) return;
+    setConfirmingDelete(false);
+    deleteTask(task.id);
+    onClose();
   };
 
   const startMonday = startDate
@@ -1603,12 +1597,37 @@ export function NewTaskForm({
   const renderActions = () => (
     <View style={styles.actions}>
       {task ? (
-        <Pressable onPress={handleDelete} hitSlop={8} style={styles.deleteButton}>
-          <Ionicons name="trash-outline" size={14} color={theme.colors.danger} />
-          <Text style={[styles.deleteText, { color: theme.colors.danger }]}>
-            Eliminar
-          </Text>
-        </Pressable>
+        confirmingDelete ? (
+          <View style={styles.confirmRow}>
+            <Pressable
+              onPress={() => setConfirmingDelete(false)}
+              style={[styles.confirmBtn, { backgroundColor: theme.colors.surfaceVariant }]}
+            >
+              <Text style={[styles.confirmBtnText, { color: theme.colors.textSecondary }]}>
+                Cancelar
+              </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleDelete}
+              style={[styles.confirmBtn, { backgroundColor: theme.colors.danger }]}
+            >
+              <Text style={[styles.confirmBtnText, { color: '#FFFFFF' }]}>
+                Confirmar eliminar
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            onPress={() => setConfirmingDelete(true)}
+            hitSlop={8}
+            style={styles.deleteButton}
+          >
+            <Ionicons name="trash-outline" size={14} color={theme.colors.danger} />
+            <Text style={[styles.deleteText, { color: theme.colors.danger }]}>
+              Eliminar
+            </Text>
+          </Pressable>
+        )
       ) : (
         <View style={{ flex: 1 }} />
       )}
@@ -2064,5 +2083,21 @@ const styles = StyleSheet.create({
   deleteText: {
     fontSize: 14,
     fontWeight: '700',
+  },
+  confirmRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  confirmBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  confirmBtnText: {
+    fontSize: 13,
+    fontWeight: '800',
   },
 });
